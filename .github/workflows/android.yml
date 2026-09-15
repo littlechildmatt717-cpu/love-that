@@ -1,4 +1,4 @@
-kname: Build love that Android
+name: Build love that Android
 
 on:
   workflow_dispatch:
