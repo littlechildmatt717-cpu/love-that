@@ -42,12 +42,22 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: '14742923'
+          accept-android-sdk-licenses: 'yes'
 
-      - name: Install Android SDK
+      - name: Install Android SDK 36
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-36"
+          sdkmanager "build-tools;36.0.0"
 
+      - name: Verify Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          sdkmanager --version
+          adb version
       - name: Install npm dependencies
         run: npm install --no-audit --no-fund
 
