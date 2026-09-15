@@ -1,4 +1,4 @@
-name: Build love that Android
+kname: Build love that Android
 
 on:
   workflow_dispatch:
@@ -58,6 +58,7 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           sdkmanager --version
           adb version
+          
       - name: Install npm dependencies
         run: npm install --no-audit --no-fund
 
