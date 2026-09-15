@@ -2,26 +2,12 @@ name: Build love that Android
 
 on:
   workflow_dispatch:
-
   push:
     branches:
       - main
-    paths:
-      - 'src/**'
-      - 'public/**'
-      - 'scripts/**'
-      - 'supabase/**'
-      - 'capacitor.config.ts'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/android.yml'
 
 permissions:
   contents: read
-
-concurrency:
-  group: android-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   android:
@@ -29,46 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
-    env:
-      NODE_VERSION: '24'
-      JAVA_VERSION: '21'
-
-      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-
     steps:
-
-      # --------------------------------------------------
-      # CHECKOUT
-      # --------------------------------------------------
-
-    
-      - name: Checkout source code
+      - name: Checkout
         uses: actions/checkout@v7
-
-
-      # --------------------------------------------------
-      # NODE.JS 24
-      # --------------------------------------------------
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '24'
 
-      - name: Verify Node.js and npm
+      - name: Check Node.js
         run: |
-          echo "Node.js version:"
           node --version
-          echo "npm version:"
           npm --version
-
-
-      # --------------------------------------------------
-      # JAVA 21
-      # --------------------------------------------------
 
       - name: Set up Java 21
         uses: actions/setup-java@v6
@@ -76,245 +35,85 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Verify Java 21
+      - name: Check Java 21
         run: |
-          echo "Java version:"
           java -version
-          echo ""
-          echo "Java compiler version:"
           javac -version
-
-
-      # --------------------------------------------------
-      # ANDROID SDK
-      # --------------------------------------------------
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android SDK packages
+      - name: Install Android SDK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0"
-
-
-      # --------------------------------------------------
-      # NPM DEPENDENCIES
-      # --------------------------------------------------
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install npm dependencies
-        run: |
-          npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
-      - name: Verify package-lock.json
-        run: |
-          test -s package-lock.json
-          echo "package-lock.json found."
-
-
-      # --------------------------------------------------
-      # BUILD WEB APPLICATION
-      # --------------------------------------------------
+      - name: Check package lock
+        run: test -s package-lock.json
 
       - name: Build web application
+        run: npm run build
+
+      - name: Check web build
+        run: test -s dist/index.html
+
+      - name: Add Capacitor Android
         run: |
-          npm run build
-
-      - name: Verify web build
-        run: |
-          test -s dist/index.html
-          echo "Web build completed successfully."
-
-
-      # --------------------------------------------------
-      # CAPACITOR ANDROID
-      # --------------------------------------------------
-
-      - name: Check Capacitor
-        run: |
-          npx --no-install cap --version
-
-      - name: Add Android platform
-        run: |
-          if [ ! -d "android" ]; then
+          if [ ! -d android ]; then
             npx --no-install cap add android
-          else
-            echo "Android directory already exists."
           fi
 
-      - name: Sync Capacitor Android project
+      - name: Sync Capacitor
+        run: npx --no-install cap sync android
+
+      - name: Configure media permissions
+        run: python3 scripts/configure-media-permissions.py .
+
+      - name: Check Android project
         run: |
-          npx --no-install cap sync android
-
-
-      # --------------------------------------------------
-      # CAMERA AND MICROPHONE PERMISSIONS
-      # --------------------------------------------------
-
-      - name: Configure camera and microphone permissions
-        run: |
-          python3 scripts/configure-media-permissions.py .
-
-
-      # --------------------------------------------------
-      # VERIFY ANDROID PROJECT
-      # --------------------------------------------------
-
-      - name: Verify Android project
-        run: |
-          test -d android
           test -f android/gradlew
-          test -f android/settings.gradle || test -f android/settings.gradle.kts
-
           chmod +x android/gradlew
-
-          echo "Android project verified."
-
-
-      # --------------------------------------------------
-      # GRADLE
-      # --------------------------------------------------
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-
-      # --------------------------------------------------
-      # VERIFY GRADLE AND JAVA
-      # --------------------------------------------------
-
-      - name: Verify Gradle and Java
+      - name: Check Gradle and Java
         working-directory: android
         run: |
-          echo "Java:"
           java -version
-
-          echo ""
-          echo "Gradle:"
           ./gradlew --version
 
-
-      # --------------------------------------------------
-      # OPTIONAL RELEASE SIGNING
-      # --------------------------------------------------
-
-      - name: Create release signing keystore
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
-        run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/love-that-release.keystore"
-
-          test -s "$RUNNER_TEMP/love-that-release.keystore"
-
-          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/love-that-release.keystore" >> "$GITHUB_ENV"
-
-          echo "Release keystore created."
-
-
-      - name: Configure Gradle release signing
-        if: ${{ env.ANDROID_KEYSTORE_PATH != '' }}
-        run: |
-          python3 scripts/configure-android-signing.py android/app/build.gradle
-
-
-      # --------------------------------------------------
-      # BUILD RELEASE AAB
-      # --------------------------------------------------
-
-      - name: Build signed Android App Bundle
-        if: ${{ env.ANDROID_KEYSTORE_PATH != '' }}
+      - name: Build Android App Bundle
         working-directory: android
-        run: |
-          ./gradlew --no-daemon --stacktrace bundleRelease
-
-
-      - name: Build unsigned Android App Bundle
-        if: ${{ env.ANDROID_KEYSTORE_PATH == '' }}
-        working-directory: android
-        run: |
-          ./gradlew --no-daemon --stacktrace bundleRelease
-
-
-      # --------------------------------------------------
-      # BUILD DEBUG APK
-      # --------------------------------------------------
+        run: ./gradlew --no-daemon --stacktrace bundleRelease
 
       - name: Build debug APK
         working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Find Android files
         run: |
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          echo "AAB files:"
+          find android/app/build/outputs/bundle -name "*.aab" -print
 
-
-      # --------------------------------------------------
-      # FIND BUILD FILES
-      # --------------------------------------------------
-
-      - name: Locate Android build artifacts
-        run: |
-          echo "======================================"
-          echo "ANDROID APP BUNDLES"
-          echo "======================================"
-
-          find android/app/build/outputs/bundle \
-            -type f \
-            -name "*.aab" \
-            -print || true
-
-          echo ""
-          echo "======================================"
-          echo "ANDROID APK FILES"
-          echo "======================================"
-
-          find android/app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print || true
-
-
-      # --------------------------------------------------
-      # UPLOAD AAB
-      # --------------------------------------------------
+          echo "APK files:"
+          find android/app/build/outputs/apk -name "*.apk" -print
 
       - name: Upload Android App Bundle
         uses: actions/upload-artifact@v4
         with:
-          name: love-that-android-aab-${{ github.sha }}
+          name: love-that-android-aab
           path: android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
           retention-days: 14
 
-
-      # --------------------------------------------------
-      # UPLOAD DEBUG APK
-      # --------------------------------------------------
-
       - name: Upload Android debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: love-that-android-debug-apk-${{ github.sha }}
+          name: love-that-android-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
-
-
-      # --------------------------------------------------
-      # BUILD SUMMARY
-      # --------------------------------------------------
-
-       - name: Build summary
-        if: always()
-        run: |
-          {
-            echo "## love that Android Build"
-            echo ""
-            echo "Repository: ${{ github.repository }}"
-            echo "Branch: ${{ github.ref_name }}"
-            echo "Commit: ${{ github.sha }}"
-            echo "Node.js: $(node --version)"
-            echo "npm: $(npm --version)"
-            echo "Java: 21"
-            echo "Android SDK: 36"
-            echo "Status: ${{ job.status }}"
-          } >> "$GITHUB_STEP_SUMMARY"
