@@ -99,6 +99,7 @@ jobs:
         run: python3 scripts/configure-media-permissions.py .
 
       # Android project
+            
       - name: Check Android project
         run: |
           test -f android/gradlew
