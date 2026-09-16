@@ -40,17 +40,16 @@ jobs:
           java -version
           javac -version
 
+      # Android SDK
+      # Licenses are accepted separately below.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          cmdline-tools-version: '14742923'
-          accept-android-sdk-licenses: 'yes'
-
-      -     - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          accept-android-sdk-licenses: 'true'
           packages: ''
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
       - name: Install Android SDK 36
         run: |
@@ -64,7 +63,8 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           sdkmanager --version
           adb version
-          
+
+      # Node / React / Vite
       - name: Install npm dependencies
         run: npm install --no-audit --no-fund
 
@@ -77,6 +77,7 @@ jobs:
       - name: Check web build
         run: test -s dist/index.html
 
+      # Capacitor
       - name: Add Capacitor Android
         run: |
           if [ ! -d android ]; then
@@ -89,6 +90,7 @@ jobs:
       - name: Configure media permissions
         run: python3 scripts/configure-media-permissions.py .
 
+      # Android project
       - name: Check Android project
         run: |
           test -f android/gradlew
@@ -103,14 +105,17 @@ jobs:
           java -version
           ./gradlew --version
 
+      # Release AAB
       - name: Build Android App Bundle
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace bundleRelease
 
+      # Debug APK
       - name: Build debug APK
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace assembleDebug
 
+      # Find generated files
       - name: Find Android files
         run: |
           echo "AAB files:"
@@ -119,6 +124,7 @@ jobs:
           echo "APK files:"
           find android/app/build/outputs/apk -name "*.apk" -print
 
+      # Upload AAB
       - name: Upload Android App Bundle
         uses: actions/upload-artifact@v4
         with:
@@ -127,6 +133,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Upload debug APK
       - name: Upload Android debug APK
         uses: actions/upload-artifact@v4
         with:
