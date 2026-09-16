@@ -1,4 +1,3 @@
-
 name: Build love that Android
 
 on:
@@ -20,12 +19,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Show repository contents
+      - name: Show repository files
+        run: |
+          echo "Repository location:"
+          pwd
+          echo ""
+          echo "Top-level files:"
+          ls -la
+          echo ""
+          echo "Looking for package.json:"
+          find . -maxdepth 4 -name package.json -print
+
+      # Find the project directory
+      - name: Find project directory
+        shell: bash
+        run: |
+          PROJECT_DIR=$(dirname "$(find . -maxdepth 4 -name package.json -type f | head -n 1)")
+
+          if [ -z "$PROJECT_DIR" ] || [ "$PROJECT_DIR" = "." ]; then
+            PROJECT_DIR="."
+          fi
+
+          echo "Project directory: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
       # Node.js 24
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: "npm"
+          cache-dependency-path: "${{ env.PROJECT_DIR }}/package-lock.json"
 
       - name: Check Node.js
         run: |
@@ -68,47 +93,64 @@ jobs:
           sdkmanager --version
           adb version
 
-      # Install npm dependencies
-      - name: Install npm dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Check package lock
-        run: test -s package-lock.json
-
-      # Check required project files
+      # Check project
       - name: Check project files
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          echo "Working directory:"
+          pwd
+          echo ""
+          echo "Project files:"
+          ls -la
+
           test -f package.json
           test -f index.html
           test -f src/main.jsx
           test -f src/App.jsx
+
+          echo ""
           echo "Required project files found."
+
+      # Install npm dependencies
+      - name: Install npm dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: npm install --no-audit --no-fund
+
+      - name: Check package lock
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: test -s package-lock.json
 
       # Build React/Vite application
       - name: Build web application
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npm run build
 
       - name: Check web build
+        working-directory: ${{ env.PROJECT_DIR }}
         run: test -s dist/index.html
 
       # Capacitor
       - name: Install Capacitor CLI
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install @capacitor/cli@8.5.2 --save-dev --no-audit --no-fund
           test -f node_modules/.bin/cap
           node_modules/.bin/cap --version
 
       - name: Add Capacitor Android
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           if [ ! -d android ]; then
             node_modules/.bin/cap add android
           fi
 
       - name: Sync Capacitor
+        working-directory: ${{ env.PROJECT_DIR }}
         run: node_modules/.bin/cap sync android
 
       # Android project
       - name: Check Android project
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           test -f android/gradlew
           chmod +x android/gradlew
@@ -118,27 +160,29 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Check Gradle and Java
-        working-directory: android
+        working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
           java -version
           ./gradlew --version
 
       # Release AAB
       - name: Build Android App Bundle
-        working-directory: android
+        working-directory: ${{ env.PROJECT_DIR }}/android
         run: ./gradlew --no-daemon --stacktrace bundleRelease
 
       # Debug APK
       - name: Build debug APK
-        working-directory: android
+        working-directory: ${{ env.PROJECT_DIR }}/android
         run: ./gradlew --no-daemon --stacktrace assembleDebug
 
       # Find generated files
       - name: Find Android files
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           echo "AAB files:"
           find android/app/build/outputs/bundle -name "*.aab" -print
 
+          echo ""
           echo "APK files:"
           find android/app/build/outputs/apk -name "*.apk" -print
 
@@ -147,7 +191,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: love-that-android-aab
-          path: android/app/build/outputs/bundle/release/*.aab
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
           retention-days: 14
 
@@ -156,6 +200,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: love-that-android-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
