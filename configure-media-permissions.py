@@ -44,4 +44,4 @@ for permission in permissions:
             {f"{{{ANDROID_NS}}}name": permission},
         )
 
-tree.write(manifest, encoding="utf-8", xml_declaration=True)
+tree.write(manifest, encoding="utf-8", xml_declaration=True
