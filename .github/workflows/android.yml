@@ -1,4 +1,3 @@
-
 name: Build love that Android
 
 on:
@@ -43,7 +42,7 @@ jobs:
           javac -version
 
       # Android SDK
-      - - name: Set up Android SDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
           sdk-tools-version: "11.0"
