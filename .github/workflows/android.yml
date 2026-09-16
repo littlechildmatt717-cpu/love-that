@@ -46,6 +46,12 @@ jobs:
           cmdline-tools-version: '14742923'
           accept-android-sdk-licenses: 'yes'
 
+      -     - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: 'true'
+          packages: ''
+
       - name: Install Android SDK 36
         run: |
           sdkmanager "platform-tools"
