@@ -78,7 +78,7 @@ jobs:
         run: test -s dist/index.html
 
       # Capacitor
-          - name: Check Capacitor CLI
+      - name: Check Capacitor CLI
         run: |
           npx cap --version
           npm exec cap -- --version
