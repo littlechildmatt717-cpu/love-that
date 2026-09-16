@@ -17,38 +17,33 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      # Node.js 24
       - name: Set up Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "24"
-          cache: "npm"
+          node-version: '24'
 
       - name: Check Node.js
         run: |
           node --version
           npm --version
 
-      # Java 21
       - name: Set up Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: '21'
 
       - name: Check Java 21
         run: |
           java -version
           javac -version
 
-      # Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          cmdline-tools-version: "12266719"
-          packages: ""
+          packages: ''
 
       - name: Accept Android SDK licenses
         run: |
@@ -67,78 +62,43 @@ jobs:
           sdkmanager --version
           adb version
 
-      # Project is in repository root
-      - name: Check project files
-        run: |
-          echo "Working directory:"
-          pwd
-
-          echo ""
-          echo "Checking project files..."
-
-          test -f package.json
-          test -f package-lock.json
-          test -f index.html
-          test -f main.jsx
-          test -f capacitor.config.ts
-
-          echo ""
-          echo "Required root project files found."
-
-          echo ""
-          echo "src directory:"
-          ls -la src
-
-      # Install dependencies
       - name: Install npm dependencies
-        run: |
-          npm install --no-audit --no-fund
-          - name: Install TypeScript
-          run: npm install --save-dev typescript --no-audit --no-fund
-  
-      # Install Capacitor CLI
-      - name: Install Capacitor CLI
-        run: |
-          npm install @capacitor/cli@8.5.2 --save-dev --no-audit --no-fund
-          test -f node_modules/.bin/cap
-          node_modules/.bin/cap --version
+        run: npm install --no-audit --no-fund
 
-           - name: Install TypeScript
-         run: npm install --save-dev typescript --no-audit --no-fund
-     
-      # Build React/Vite application
+      - name: Check package lock
+        run: test -s package-lock.json
+
+      - name: Install Capacitor CLI
+        run: npm install @capacitor/cli@8.5.2 --save-dev --no-audit --no-fund
+
+      - name: Install TypeScript
+        run: npm install --save-dev typescript@5.9.2 --no-audit --no-fund
+
       - name: Build web application
         run: npm run build
 
       - name: Check web build
-        run: |
-          test -s dist/index.html
-          echo "Web build completed successfully."
+        run: test -s dist/index.html
 
-      # Add Android platform
       - name: Add Capacitor Android
         run: |
           if [ ! -d android ]; then
-            node_modules/.bin/cap add android
-          else
-            echo "Android directory already exists."
+            npx --no-install cap add android
           fi
 
-      # Sync Capacitor
       - name: Sync Capacitor
-        run: |
-          node_modules/.bin/cap sync android
+        run: npx --no-install cap sync android
 
-      # Check Android project
+      - name: Configure media permissions
+        run: python3 scripts/configure-media-permissions.py .
+
       - name: Check Android project
         run: |
           test -f android/gradlew
           chmod +x android/gradlew
-          echo "Android project found."
 
-      # Gradle
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Check Gradle and Java
         working-directory: android
@@ -146,29 +106,22 @@ jobs:
           java -version
           ./gradlew --version
 
-      # Release AAB
       - name: Build Android App Bundle
         working-directory: android
-        run: |
-          ./gradlew --no-daemon --stacktrace bundleRelease
+        run: ./gradlew --no-daemon --stacktrace bundleRelease
 
-      # Debug APK
       - name: Build debug APK
         working-directory: android
-        run: |
-          ./gradlew --no-daemon --stacktrace assembleDebug
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
 
-      # Find generated files
       - name: Find Android files
         run: |
           echo "AAB files:"
           find android/app/build/outputs/bundle -name "*.aab" -print
 
-          echo ""
           echo "APK files:"
           find android/app/build/outputs/apk -name "*.apk" -print
 
-      # Upload AAB
       - name: Upload Android App Bundle
         uses: actions/upload-artifact@v4
         with:
@@ -177,11 +130,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Upload debug APK
       - name: Upload Android debug APK
         uses: actions/upload-artifact@v4
-        with:
-          name: love-that-android-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 14
+       
