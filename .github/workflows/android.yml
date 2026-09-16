@@ -103,6 +103,9 @@ jobs:
           test -f node_modules/.bin/cap
           node_modules/.bin/cap --version
 
+           - name: Install TypeScript
+         run: npm install --save-dev typescript --no-audit --no-fund
+     
       # Build React/Vite application
       - name: Build web application
         run: npm run build
