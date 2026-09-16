@@ -78,12 +78,19 @@ jobs:
         run: test -s dist/index.html
 
       # Capacitor
+          - name: Check Capacitor CLI
+        run: |
+          npx cap --version
+          npm exec cap -- --version
+
       - name: Add Capacitor Android
         run: |
           if [ ! -d android ]; then
-            npx --no-install cap add android
+            npx cap add android
           fi
 
+      - name: Sync Capacitor
+        run: npx cap sync android
       - name: Sync Capacitor
         run: npx --no-install cap sync android
 
