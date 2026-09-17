@@ -89,13 +89,32 @@ jobs:
       - name: Sync Capacitor
         run: npx --no-install cap sync android
 
-      # ✅ FIX 1: Skip script if file doesn't exist
+      # ✅ FIX: Run RIGHT AFTER sync, and VERIFY it worked
+      - name: Fix AndroidManifest.xml namespace
+        working-directory: android/app/src/main
+        run: |
+          MANIFEST="AndroidManifest.xml"
+          echo "📄 Before fix — first 3 lines:"
+          head -n 3 "$MANIFEST"
+          
+          # Check if namespace exists
+          if grep -q 'xmlns:android="http://schemas.android.com/apk/res/android"' "$MANIFEST"; then
+            echo "✅ Namespace already present"
+          else
+            echo "🔧 Adding missing xmlns:android namespace..."
+            sed -i.bak 's/^<manifest>/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/' "$MANIFEST"
+            echo "✅ Fixed!"
+          fi
+          
+          echo "📄 After fix — first 3 lines:"
+          head -n 3 "$MANIFEST"
+
       - name: Configure media permissions
         run: |
           if [ -f scripts/configure-media-permissions.py ]; then
             python3 scripts/configure-media-permissions.py .
           else
-            echo "⚠️ configure-media-permissions.py not found — skipping this step"
+            echo "⚠️ configure-media-permissions.py not found — skipping"
             mkdir -p scripts
           fi
 
@@ -113,19 +132,6 @@ jobs:
           java -version
           ./gradlew --version
 
-      # ✅ FIX 2: Auto-fix AndroidManifest.xml namespace error
-      - name: Fix AndroidManifest namespace
-        working-directory: android/app/src/main
-        run: |
-          MANIFEST="AndroidManifest.xml"
-          if grep -q 'xmlns:android=' "$MANIFEST"; then
-            echo "✅ Namespace already present"
-          else
-            echo "🔧 Adding Android namespace declaration..."
-            sed -i.bak 's/<manifest>/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/' "$MANIFEST"
-            echo "✅ Fixed: $(grep xmlns:android "$MANIFEST")"
-          fi
-
       - name: Build Android App Bundle
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace bundleRelease
@@ -138,7 +144,6 @@ jobs:
         run: |
           echo "AAB files:"
           find android/app/build/outputs/bundle -name "*.aab" -print
-
           echo "APK files:"
           find android/app/build/outputs/apk -name "*.apk" -print
 
