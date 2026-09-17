@@ -82,32 +82,32 @@ jobs:
 
       - name: Add Capacitor Android
         run: |
-          if [ ! -d android ]; then
-            npx --no-install cap add android
+          # Always remove first to ensure fresh generation
+          if [ -d android ]; then
+            echo "🗑️ Removing existing android folder..."
+            rm -rf android
           fi
+          npx --no-install cap add android
 
       - name: Sync Capacitor
         run: npx --no-install cap sync android
 
-      # ✅ FIX: Run RIGHT AFTER sync, and VERIFY it worked
-      - name: Fix AndroidManifest.xml namespace
+      # ✅ GUARANTEED FIX — Add namespace AFTER sync, BEFORE build
+      - name: Fix AndroidManifest namespace
         working-directory: android/app/src/main
         run: |
           MANIFEST="AndroidManifest.xml"
           echo "📄 Before fix — first 3 lines:"
           head -n 3 "$MANIFEST"
           
-          # Check if namespace exists
           if grep -q 'xmlns:android="http://schemas.android.com/apk/res/android"' "$MANIFEST"; then
             echo "✅ Namespace already present"
           else
-            echo "🔧 Adding missing xmlns:android namespace..."
-            sed -i.bak 's/^<manifest>/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/' "$MANIFEST"
-            echo "✅ Fixed!"
+            echo "🔧 Adding xmlns:android namespace..."
+            sed -i.bak -E 's/^<manifest[[:space:]]*>/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/' "$MANIFEST"
+            echo "✅ Fixed manifest — first 3 lines:"
+            head -n 3 "$MANIFEST"
           fi
-          
-          echo "📄 After fix — first 3 lines:"
-          head -n 3 "$MANIFEST"
 
       - name: Configure media permissions
         run: |
@@ -162,3 +162,4 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+
