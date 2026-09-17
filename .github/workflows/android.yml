@@ -82,7 +82,6 @@ jobs:
 
       - name: Add Capacitor Android
         run: |
-          # Always remove first to ensure fresh generation
           if [ -d android ]; then
             echo "🗑️ Removing existing android folder..."
             rm -rf android
@@ -92,22 +91,30 @@ jobs:
       - name: Sync Capacitor
         run: npx --no-install cap sync android
 
-      # ✅ GUARANTEED FIX — Add namespace AFTER sync, BEFORE build
-      - name: Fix AndroidManifest namespace
+      # ✅ BULLETPROOF FIX — Python handles ANY manifest format
+      - name: Fix AndroidManifest namespace — FINAL FIX
         working-directory: android/app/src/main
         run: |
-          MANIFEST="AndroidManifest.xml"
-          echo "📄 Before fix — first 3 lines:"
-          head -n 3 "$MANIFEST"
-          
-          if grep -q 'xmlns:android="http://schemas.android.com/apk/res/android"' "$MANIFEST"; then
-            echo "✅ Namespace already present"
-          else
-            echo "🔧 Adding xmlns:android namespace..."
-            sed -i.bak -E 's/^<manifest[[:space:]]*>/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/' "$MANIFEST"
-            echo "✅ Fixed manifest — first 3 lines:"
-            head -n 3 "$MANIFEST"
-          fi
+          python3 << 'PYEOF'
+          import re
+          manifest_path = "AndroidManifest.xml"
+          with open(manifest_path, "r", encoding="utf-8") as f:
+              content = f.read()
+          if 'xmlns:android="http://schemas.android.com/apk/res/android"' in content:
+              print("✅ Namespace already present")
+          else:
+              print("🔧 Adding xmlns:android namespace...")
+              content = re.sub(
+                  r"<manifest(\s*[^>]*)>",
+                  r'<manifest xmlns:android="http://schemas.android.com/apk/res/android"\1>',
+                  content,
+                  count=1
+              )
+              with open(manifest_path, "w", encoding="utf-8") as f:
+                  f.write(content)
+              print("✅ Fixed! First 5 lines:")
+              print("\n".join(content.splitlines()[:5]))
+          PYEOF
 
       - name: Configure media permissions
         run: |
@@ -162,4 +169,3 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
-
