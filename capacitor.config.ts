@@ -1,9 +1,15 @@
-import type { CapacitorConfig } from '@capacitor/cli';
-const config: CapacitorConfig = {
-  appId: 'com.meetdating.app',
-  appName: 'love that',
-  webDir: 'dist',
-  bundledWebRuntime: false,
-  server: { androidScheme: 'https' }
-};
-export default config;
+{
+  "appId": "com.lovethat.app",
+  "appName": "love that",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "manifest": {
+      "$": {
+        "xmlns:android": "http://schemas.android.com/apk/res/android"
+      }
+    }
+  }
+}
