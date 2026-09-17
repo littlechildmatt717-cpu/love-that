@@ -89,8 +89,15 @@ jobs:
       - name: Sync Capacitor
         run: npx --no-install cap sync android
 
+      # ✅ FIX 1: Skip script if file doesn't exist
       - name: Configure media permissions
-        run: python3 scripts/configure-media-permissions.py .
+        run: |
+          if [ -f scripts/configure-media-permissions.py ]; then
+            python3 scripts/configure-media-permissions.py .
+          else
+            echo "⚠️ configure-media-permissions.py not found — skipping this step"
+            mkdir -p scripts
+          fi
 
       - name: Check Android project
         run: |
@@ -105,6 +112,19 @@ jobs:
         run: |
           java -version
           ./gradlew --version
+
+      # ✅ FIX 2: Auto-fix AndroidManifest.xml namespace error
+      - name: Fix AndroidManifest namespace
+        working-directory: android/app/src/main
+        run: |
+          MANIFEST="AndroidManifest.xml"
+          if grep -q 'xmlns:android=' "$MANIFEST"; then
+            echo "✅ Namespace already present"
+          else
+            echo "🔧 Adding Android namespace declaration..."
+            sed -i.bak 's/<manifest>/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">/' "$MANIFEST"
+            echo "✅ Fixed: $(grep xmlns:android "$MANIFEST")"
+          fi
 
       - name: Build Android App Bundle
         working-directory: android
@@ -132,4 +152,8 @@ jobs:
 
       - name: Upload Android debug APK
         uses: actions/upload-artifact@v4
-       
+        with:
+          name: love-that-android-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
