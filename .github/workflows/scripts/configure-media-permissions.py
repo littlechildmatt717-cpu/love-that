@@ -1,67 +1,78 @@
-import re
-import sys
-import xml.etree.ElementTree as ET
-from pathlib import Path
+      - name: Sync Capacitor
+        run: npx --no-install cap sync android
 
-ANDROID_NS = "http://schemas.android.com/apk/res/android"
-ET.register_namespace('android', ANDROID_NS)
+      # ✅ EVERYTHING IN ONE STEP — No external files, no path issues
+      - name: Fix manifest + add permissions — ALL INLINE
+        working-directory: android/app/src/main
+        run: |
+          python3 <<'PYTHON'
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          
+          MANIFEST = "AndroidManifest.xml"
+          ANDROID_NS = "http://schemas.android.com/apk/res/android"
+          ET.register_namespace('android', ANDROID_NS)
+          
+          # 1. READ RAW
+          with open(MANIFEST, "r", encoding="utf-8") as f:
+              content = f.read()
+          
+          print("📄 BEFORE — First 5 lines:")
+          print("\n".join(content.splitlines()[:5]))
+          
+          # 2. ADD NAMESPACE — ROBUST
+          if not re.search(r'\bxmlns:android\s*=', content):
+              print("🔧 Adding xmlns:android namespace...")
+              content = re.sub(
+                  r'<manifest\b',
+                  '<manifest xmlns:android="http://schemas.android.com/apk/res/android"',
+                  content,
+                  count=1
+              )
+          
+          # 3. PARSE AND ADD PERMISSIONS
+          root = ET.fromstring(content)
+          
+          PERMS = [
+              "android.permission.READ_MEDIA_IMAGES",
+              "android.permission.READ_MEDIA_VIDEO",
+              "android.permission.READ_EXTERNAL_STORAGE",
+              "android.permission.CAMERA",
+              "android.permission.RECORD_AUDIO",
+          ]
+          
+          existing = {p.get(f"{{{ANDROID_NS}}}name") for p in root.findall(".//uses-permission")}
+          
+          for pname in PERMS:
+              if pname not in existing:
+                  elem = ET.Element("uses-permission")
+                  elem.set(f"{{{ANDROID_NS}}}name", pname)
+                  root.insert(0, elem)
+                  print(f"  ✅ Added: {pname}")
+          
+          # 4. WRITE BACK
+          tree = ET.ElementTree(root)
+          with open(MANIFEST, "wb") as f:
+              f.write(b'<?xml version="1.0" encoding="utf-8"?>\n')
+              tree.write(f, encoding="utf-8")
+          
+          # 5. VALIDATE — FAIL FAST IF BROKEN
+          try:
+              tree = ET.parse(MANIFEST)
+              print("\n✅ AFTER — First 5 lines:")
+              with open(MANIFEST, "r", encoding="utf-8") as f:
+                  print("\n".join(f.read().splitlines()[:5]))
+              print("\n✅ ✅ ✅ MANIFEST IS VALID — READY TO BUILD ✅ ✅ ✅")
+          except Exception as e:
+              print(f"\n❌ FINAL VALIDATION FAILED: {e}")
+              with open(MANIFEST, "r", encoding="utf-8") as f:
+                  print("--- BAD FILE ---")
+                  print(f.read())
+                  print("--- END ---")
+              exit(1)
+          PYTHON
 
-PERMISSIONS = [
-    "android.permission.READ_MEDIA_IMAGES",
-    "android.permission.READ_MEDIA_VIDEO",
-    "android.permission.READ_EXTERNAL_STORAGE",
-    "android.permission.CAMERA",
-    "android.permission.RECORD_AUDIO",
-]
-
-def main(project_root):
-    manifest_path = Path(project_root) / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
-    
-    print(f"📄 Reading: {manifest_path}")
-    with open(manifest_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Step 1: Add namespace if missing — ROBUST check (any quote style)
-    if not re.search(r'\bxmlns:android\s*=', content):
-        print("🔧 Adding missing xmlns:android namespace")
-        content = re.sub(
-            r'<manifest\b',
-            '<manifest xmlns:android="http://schemas.android.com/apk/res/android"',
-            content,
-            count=1
-        )
-    
-    # Step 2: Parse XML safely
-    root = ET.fromstring(content)
-    
-    # Step 3: Add permissions if not present
-    existing = {perm.get(f'{{{ANDROID_NS}}}name') for perm in root.findall('.//uses-permission')}
-    
-    for perm_name in PERMISSIONS:
-        if perm_name not in existing:
-            perm_elem = ET.Element('uses-permission')
-            perm_elem.set(f'{{{ANDROID_NS}}}name', perm_name)
-            root.insert(0, perm_elem)
-            print(f"  ✅ Added: {perm_name}")
-        else:
-            print(f"  ⏭️ Already present: {perm_name}")
-    
-    # Step 4: Write back with proper XML declaration
-    with open(manifest_path, 'wb') as f:
-        f.write(b'<?xml version="1.0" encoding="utf-8"?>\n')
-        ET.ElementTree(root).write(f, encoding='utf-8')
-    
-    # Step 5: Validate — CATCH ERRORS EARLY
-    try:
-        ET.parse(manifest_path)
-        print("✅ Manifest is valid XML")
-    except ET.ParseError as e:
-        print(f"❌ XML ERROR at line {e.lineno}, column {e.offset}: {e}")
-        with open(manifest_path) as f:
-            print("--- BAD FILE CONTENT ---")
-            print(f.read())
-            print("--- END ---")
-        sys.exit(1)
-
-if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else '.')
+      - name: Build Android App Bundle
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace bundleRelease
