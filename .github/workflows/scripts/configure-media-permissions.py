@@ -30,18 +30,15 @@ permissions = [
     "android.permission.READ_MEDIA_VIDEO",
 ]
 
+name_attribute = f"{{{ANDROID_NS}}}name"
 existing = {
-    element.get(f"{{{ANDROID_NS}}}name")
+    element.get(name_attribute)
     for element in root.findall("uses-permission")
 }
 
 for permission in permissions:
     if permission not in existing:
-        ET.SubElement(
-            root,
-            "uses-permission",
-            {f"{{{ANDROID_NS}}}name": permission},
-        )
+        ET.SubElement(root, "uses-permission", {name_attribute: permission})
 
 tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
 
@@ -53,7 +50,6 @@ except ET.ParseError as error:
 
 print(f"Valid AndroidManifest.xml with media permissions: {manifest_path}")
 
-# iOS privacy entries, when the iOS project exists.
 plist = root_dir / "ios/App/App/Info.plist"
 if plist.exists():
     s = plist.read_text(encoding="utf-8")
