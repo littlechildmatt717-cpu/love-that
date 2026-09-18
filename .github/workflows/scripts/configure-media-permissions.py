@@ -1,112 +1,75 @@
-#!/usr/bin/env python3
-"""Configure media permissions without corrupting Capacitor's XML manifests."""
-from pathlib import Path
 import re
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
-ET.register_namespace("android", ANDROID_NS)
+ET.register_namespace('android', ANDROID_NS)
 
-root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
-manifest = root / "android/app/src/main/AndroidManifest.xml"
+# Permissions to add
+PERMISSIONS = [
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VIDEO",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.CAMERA",
+    "android.permission.RECORD_AUDIO",
+]
 
-
-def repair_namespace(path: Path) -> None:
-    """Repair only a missing android namespace before XML parsing."""
-    raw = path.read_text(encoding="utf-8")
-
-    manifest_match = re.search(r"<manifest\b", raw)
-    if not manifest_match:
-        raise SystemExit(f"No <manifest> root element found in {path}")
-
-    if not re.search(r"\bxmlns:android\s*=", raw):
-        repaired = re.sub(
-            r"(<manifest\b)",
-            r'\1 xmlns:android="http://schemas.android.com/apk/res/android"',
-            raw,
-            count=1,
+def main(project_root):
+    manifest_path = Path(project_root) / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
+    
+    print(f"📄 Reading: {manifest_path}")
+    with open(manifest_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Fix missing namespace first
+    if 'xmlns:android' not in content:
+        print("🔧 Adding missing xmlns:android namespace")
+        content = content.replace(
+            '<manifest>',
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
         )
-        if repaired == raw:
-            raise SystemExit(f"Could not repair xmlns:android in {path}")
-        path.write_text(repaired, encoding="utf-8")
-        print("Repaired missing xmlns:android")
+    
+    # Parse XML properly
+    root = ET.fromstring(content)
+    
+    # Ensure manifest has namespace
+    if 'android' not in root.nsmap:
+        root.set('xmlns:android', ANDROID_NS)
+    
+    # Find or create <manifest> root and add permissions
+    existing = set()
+    for perm in root.findall('.//uses-permission'):
+        name = perm.get(f'{{{ANDROID_NS}}}name')
+        if name:
+            existing.add(name)
+    
+    added = 0
+    for perm_name in PERMISSIONS:
+        full_name = perm_name if perm_name.startswith('android.permission.') else f'android.permission.{perm_name}'
+        if full_name not in existing:
+            perm_elem = ET.Element('uses-permission')
+            perm_elem.set(f'{{{ANDROID_NS}}}name', full_name)
+            root.insert(0, perm_elem)  # Insert at top inside manifest
+            added += 1
+            print(f"  ✅ Added: {full_name}")
+        else:
+            print(f"  ⏭️ Already exists: {full_name}")
+    
+    if added == 0:
+        print("✅ All permissions already present")
+    
+    # Write back with proper declaration
+    tree = ET.ElementTree(root)
+    with open(manifest_path, 'wb') as f:
+        f.write(b'<?xml version="1.0" encoding="utf-8"?>\n')
+        tree.write(f, encoding='utf-8')
+    
+    print(f"✅ Manifest updated: {manifest_path}")
+    
+    # Validate
+    ET.parse(manifest_path)
+    print("✅ XML validation passed")
 
-
-def parse_manifest(path: Path) -> ET.ElementTree:
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError as exc:
-        print("----- AndroidManifest.xml -----")
-        print(path.read_text(encoding="utf-8"))
-        print("----- end AndroidManifest.xml -----")
-        raise SystemExit(f"Invalid AndroidManifest.xml: {exc}")
-
-    root_element = tree.getroot()
-    if root_element.tag.split("}")[-1] != "manifest":
-        raise SystemExit(f"Unexpected manifest root: {root_element.tag}")
-    return tree
-
-
-if manifest.exists():
-    # This must happen before ET.parse(), because an unbound android prefix is
-    # itself an XML parse error.
-    repair_namespace(manifest)
-    tree = parse_manifest(manifest)
-    manifest_root = tree.getroot()
-
-    permissions = (
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-    )
-
-    existing = {
-        element.get(f"{{{ANDROID_NS}}}name")
-        for element in manifest_root.findall("uses-permission")
-    }
-
-    changed = False
-    for permission in permissions:
-        if permission not in existing:
-            ET.SubElement(
-                manifest_root,
-                "uses-permission",
-                {f"{{{ANDROID_NS}}}name": permission},
-            )
-            changed = True
-
-    if changed:
-        tree.write(manifest, encoding="utf-8", xml_declaration=True)
-        print("Updated Android media permissions")
-
-    # Always validate the exact bytes that will be consumed by Gradle.
-    parse_manifest(manifest)
-    final_text = manifest.read_text(encoding="utf-8")
-    if not re.search(r'xmlns:android\s*=\s*["\']http://schemas\.android\.com/apk/res/android["\']', final_text):
-        raise SystemExit("AndroidManifest.xml is missing the Android namespace after update")
-    print(f"Valid AndroidManifest.xml: {manifest}")
-else:
-    raise SystemExit(f"AndroidManifest.xml not found: {manifest}")
-
-
-# iOS: add each privacy key independently and idempotently.
-plist = root / "ios/App/App/Info.plist"
-if plist.exists():
-    text = plist.read_text(encoding="utf-8")
-    additions = []
-    if "NSCameraUsageDescription" not in text:
-        additions += [
-            "\t<key>NSCameraUsageDescription</key>",
-            "\t<string>love that uses your camera for private video calls and speed dating.</string>",
-        ]
-    if "NSMicrophoneUsageDescription" not in text:
-        additions += [
-            "\t<key>NSMicrophoneUsageDescription</key>",
-            "\t<string>love that uses your microphone for private audio/video calls and speed dating.</string>",
-        ]
-    if additions:
-        close = text.rfind("</dict>")
-        if close == -1:
-            raise SystemExit("Could not find closing </dict> in iOS Info.plist")
-        plist.write_text(text[:close] + "\n" + "\n".join(additions) + "\n" + text[close:], encoding="utf-8")
-        print(f"Updated iOS privacy permissions: {plist}")
+if __name__ == '__main__':
+    main(sys.argv[1] if len(sys.argv) > 1 else '.')
