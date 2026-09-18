@@ -1,46 +1,36 @@
-#!/usr/bin/env python3
-from __future__ import annotations
+      - name: Sync Capacitor
+        run: npx --no-install cap sync android
 
-import re
-import sys
-from pathlib import Path
-import xml.etree.ElementTree as ET
+      # ✅ Use the FIXED script — XML-safe, no corruption
+      - name: Configure media permissions
+        run: python3 .github/workflows/scripts/configure-media-permissions.py .
 
-manifest_path = Path("android/app/src/main/AndroidManifest.xml")
-if not manifest_path.exists():
-    print(f"Android manifest not found: {manifest_path}")
-    raise SystemExit(1)
+      # ✅ Validate before build — catch problems early
+      - name: Validate AndroidManifest.xml
+        working-directory: android/app/src/main
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          try:
+              tree = ET.parse("AndroidManifest.xml")
+              root = tree.getroot()
+              ns = "http://schemas.android.com/apk/res/android"
+              if 'android' in root.nsmap:
+                  print("✅ Namespace present")
+              else:
+                  print("❌ MISSING xmlns:android namespace!")
+                  exit(1)
+              print("✅ Manifest is valid XML")
+          except Exception as e:
+              print(f"❌ XML PARSE ERROR: {e}")
+              exit(1)
+          # Print first 10 lines for debug
+          print("\n📄 Manifest preview:")
+          with open("AndroidManifest.xml") as f:
+              for i, line in enumerate(f):
+                  if i < 10: print(line.rstrip())
+          PY
 
-source = manifest_path.read_text(encoding="utf-8")
-
-try:
-    root = ET.fromstring(source)
-    if root.tag.endswith("manifest") and 'http://schemas.android.com/apk/res/android' in source:
-        print(f"Manifest already valid: {manifest_path}")
-        raise SystemExit(0)
-except ET.ParseError:
-    pass
-
-match = re.search(r"<manifest\b([^>]*)>", source)
-if not match:
-    print(f"Could not find a <manifest> tag in {manifest_path}")
-    raise SystemExit(1)
-
-attrs = match.group(1)
-if "xmlns:android=" not in attrs:
-    replacement = f'<manifest xmlns:android="http://schemas.android.com/apk/res/android"{attrs}>'
-    fixed = source[:match.start()] + replacement + source[match.end():]
-    manifest_path.write_text(fixed, encoding="utf-8")
-    print(f"Added Android namespace to {manifest_path}")
-else:
-    print(f"Android namespace already present in {manifest_path}")
-
-try:
-    ET.parse(str(manifest_path))
-    print(f"Validated Android manifest: {manifest_path}")
-except ET.ParseError as exc:
-    print(f"Manifest is still invalid after namespace fix: {exc}")
-    with manifest_path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
-            print(f"{line_number:4}: {line.rstrip()}")
-    raise SystemExit(1)
+      - name: Build Android App Bundle
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace bundleRelease
