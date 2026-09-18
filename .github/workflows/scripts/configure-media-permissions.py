@@ -1,51 +1,91 @@
-from pathlib import Path
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import re
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
-root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+ANDROID_NS = "http://schemas.android.com/apk/res/android"
+ANDROID_NAME = f"{{{ANDROID_NS}}}name"
+MEDIA_PERMISSIONS = (
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VIDEO",
+)
 
-# Android: add each permission independently so the script remains idempotent
-# even if a generated Capacitor template already contains one of them.
-manifest = root / 'android/app/src/main/AndroidManifest.xml'
-if manifest.exists():
+ET.register_namespace("android", ANDROID_NS)
+
+def ensure_android_namespace(manifest_path: Path) -> None:
+    text = manifest_path.read_text(encoding="utf-8")
+
+    if not re.search(r"<manifest\b[^>]*\bxmlns:android\s*=", text, flags=re.IGNORECASE | re.DOTALL):
+        text, count = re.subn(
+            r"<manifest\b",
+            f'<manifest xmlns:android="{ANDROID_NS}"',
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+        if count != 1:
+            raise ValueError(f"Could not locate <manifest> root in {manifest_path}")
+
+        manifest_path.write_text(text, encoding="utf-8")
+        print(f"Added android namespace to {manifest_path}")
+    else:
+        print(f"Android namespace already present in {manifest_path}")
+
+def configure_permissions(manifest_path: Path) -> None:
+    tree = ET.parse(manifest_path)
+    root = tree.getroot()
+
+    if root.tag != "manifest":
+        raise ValueError(f"Unexpected root tag: {root.tag!r}")
+
+    seen: set[str] = set()
+    duplicates: list[ET.Element] = []
+
+    for permission in root.findall("uses-permission"):
+        name = permission.get(ANDROID_NAME)
+        if name is None:
+            continue
+        if name in seen:
+            duplicates.append(permission)
+        else:
+            seen.add(name)
+
+    for permission in duplicates:
+        root.remove(permission)
+
+    for permission_name in MEDIA_PERMISSIONS:
+        if permission_name not in seen:
+            ET.SubElement(root, "uses-permission", {ANDROID_NAME: permission_name})
+            seen.add(permission_name)
+            print(f"Added {permission_name}")
+        else:
+            print(f"Already present: {permission_name}")
+
+    tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
+
+def main() -> int:
+    if len(sys.argv) > 2:
+        print(f"Usage: {sys.argv[0]} [project_root]", file=sys.stderr)
+        return 2
+
+    project_root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd().resolve()
+    manifest_path = project_root / "android/app/src/main/AndroidManifest.xml"
+
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Android manifest not found: {manifest_path}")
+
     try:
-        ET.parse(manifest)
-    except ET.ParseError as exc:
-        raise SystemExit(f"Android manifest is invalid XML: {manifest}\n{exc}")
+        ensure_android_namespace(manifest_path)
+        configure_permissions(manifest_path)
+        print(f"Manifest updated successfully: {manifest_path}")
+        return 0
+    except Exception as exc:
+        print(f"Failed to configure Android manifest: {exc}", file=sys.stderr)
+        return 1
 
-    s = manifest.read_text(encoding="utf-8")
-    permissions = [
-        '<uses-permission android:name="android.permission.CAMERA" />',
-        '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
-    ]
-    missing = [p for p in permissions if p not in s]
-    if missing:
-        insertion = ''.join(f'\n    {p}' for p in missing)
-        manifest_tag_end = s.find('>')
-        if manifest_tag_end == -1:
-            raise SystemExit('Could not find Android <manifest> tag.')
-        s = s[:manifest_tag_end + 1] + insertion + s[manifest_tag_end + 1:]
-        manifest.write_text(s, encoding="utf-8")
-
-# iOS: add each privacy key independently for idempotent CI runs.
-plist = root / 'ios/App/App/Info.plist'
-if plist.exists():
-    s = plist.read_text(encoding="utf-8")
-    additions = []
-    if 'NSCameraUsageDescription' not in s:
-        additions.extend([
-            '\t<key>NSCameraUsageDescription</key>',
-            '\t<string>love that uses your camera for private video calls and speed dating.</string>',
-        ])
-    if 'NSMicrophoneUsageDescription' not in s:
-        additions.extend([
-            '\t<key>NSMicrophoneUsageDescription</key>',
-            '\t<string>love that uses your microphone for private audio/video calls and speed dating.</string>',
-        ])
-    if additions:
-        additions_text = '\n' + '\n'.join(additions) + '\n'
-        close = s.rfind('</dict>')
-        if close == -1:
-            raise SystemExit('Could not find closing </dict> in iOS Info.plist.')
-        s = s[:close] + additions_text + s[close:]
-        plist.write_text(s, encoding="utf-8")
+if __name__ == "__main__":
+    raise SystemExit(main())
