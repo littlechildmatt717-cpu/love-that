@@ -1,48 +1,41 @@
       - name: Sync Capacitor
         run: npx --no-install cap sync android
 
-      # ✅ FIX MANIFEST + PERMISSIONS
-      - name: Fix manifest + add permissions
+      # ✅ OVERWRITE ENTIRE FILE — CANNOT FAIL
+      - name: Create fresh AndroidManifest.xml
         working-directory: android/app/src/main
         run: |
-          python3 <<'PYTHON'
-          import re, xml.etree.ElementTree as ET
-          MANIFEST = "AndroidManifest.xml"
-          ANDROID_NS = "http://schemas.android.com/apk/res/android"
-          ET.register_namespace('android', ANDROID_NS)
-          
-          with open(MANIFEST, "r", encoding="utf-8") as f:
-              content = f.read()
-          
-          # Add namespace if missing
-          if not re.search(r'\bxmlns:android\s*=', content):
-              content = re.sub(r'<manifest\b', '<manifest xmlns:android="http://schemas.android.com/apk/res/android"', content, count=1)
-          
-          root = ET.fromstring(content)
-          PERMS = [
-              "android.permission.READ_MEDIA_IMAGES",
-              "android.permission.READ_MEDIA_VIDEO",
-              "android.permission.READ_EXTERNAL_STORAGE",
-              "android.permission.CAMERA",
-              "android.permission.RECORD_AUDIO",
-          ]
-          existing = {p.get(f"{{{ANDROID_NS}}}name") for p in root.findall(".//uses-permission")}
-          for p in PERMS:
-              if p not in existing:
-                  elem = ET.Element("uses-permission")
-                  elem.set(f"{{{ANDROID_NS}}}name", p)
-                  root.insert(0, elem)
-          
-          tree = ET.ElementTree(root)
-          with open(MANIFEST, "wb") as f:
-              f.write(b'<?xml version="1.0" encoding="utf-8"?>\n')
-              tree.write(f, encoding="utf-8")
-          
-          ET.parse(MANIFEST)
-          print("✅ Manifest OK")
-          PYTHON
+          cat > AndroidManifest.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.lovethat.app">
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/AppTheme.NoActionBarLaunch">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOF
+          echo "✅ Manifest created:"
+          cat AndroidManifest.xml
 
-      # ✅ BUILD — WITH LINT SKIPPED
       - name: Build Android App Bundle
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace bundleRelease -x lintVitalRelease
