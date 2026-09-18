@@ -108,13 +108,7 @@ jobs:
           PY
 
       - name: Configure media permissions
-        run: |
-          if [ -f .github/workflows/scripts/configure-media-permissions.py ]; then
-            python3 .github/workflows/scripts/configure-media-permissions.py .
-          else
-            echo "configure-media-permissions.py not found at expected path"
-            exit 1
-          fi
+        run: python3 .github/workflows/scripts/configure-media-permissions.py .
 
       - name: Validate final Android manifest
         run: |
@@ -137,5 +131,42 @@ jobs:
           test -f android/gradlew
           chmod +x android/gradlew
 
-      - name:](#)
-
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Check Gradle and Java
+        working-directory: android
+        run: |
+          java -version
+          ./gradlew --version
+
+      - name: Build Android App Bundle
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace bundleRelease
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Find Android files
+        run: |
+          echo "AAB files:"
+          find android/app/build/outputs/bundle -name "*.aab" -print
+          echo "APK files:"
+          find android/app/build/outputs/apk -name "*.apk" -print
+
+      - name: Upload Android App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: love-that-android-aab
+          path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Android debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: love-that-android-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
