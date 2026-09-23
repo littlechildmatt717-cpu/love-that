@@ -1,8 +1,8 @@
-# Android manifest template
+import re
 
-Capacitor generates the real `android/` project during GitHub Actions. The file
-`android-manifest.template.xml` is a valid manifest containing the Android
-namespace and media/camera/audio permissions.
+manifest_match = re.search(r"<manifest\b[^>]*>", s)
+if manifest_match is None:
+    raise SystemExit("Could not find Android <manifest> tag.")
 
-The workflow repairs and validates the generated
-`android/app/src/main/AndroidManifest.xml` after each step that can modify it.
+insert_at = manifest_match.end()
+s = s[:insert_at] + insertion + s[insert_at:]
