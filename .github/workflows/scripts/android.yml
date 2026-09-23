@@ -1,0 +1,107 @@
+name: Build love that Android
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  android-release:
+    name: Android release build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Generate Android project
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Validate generated Android manifest
+        working-directory: android/app/src/main
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          path = Path("AndroidManifest.xml")
+          if not path.is_file():
+              raise SystemExit(f"Missing manifest: {path}")
+
+          try:
+              ET.parse(path)
+          except ET.ParseError as error:
+              print(path.read_text(encoding="utf-8"))
+              raise SystemExit(f"Invalid AndroidManifest.xml: {error}")
+
+          print("Generated AndroidManifest.xml is valid XML.")
+          PY
+
+      - name: Configure media permissions
+        run: python3 .github/workflows/scripts/configure-media-permissions.py .
+
+      - name: Validate final Android manifest
+        working-directory: android/app/src/main
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          path = Path("AndroidManifest.xml")
+          try:
+              tree = ET.parse(path)
+              if tree.getroot().tag != "manifest":
+                  raise ValueError(f"Unexpected root element: {tree.getroot().tag!r}")
+          except (ET.ParseError, ValueError) as error:
+              print(path.read_text(encoding="utf-8"))
+              raise SystemExit(f"Invalid AndroidManifest.xml: {error}")
+
+          print("Final AndroidManifest.xml is valid XML.")
+          PY
+
+      - name: Print final Android manifest
+        run: cat android/app/src/main/AndroidManifest.xml
+
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
+      - name: Android release build
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace bundleRelease
+
+      - name: Upload release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: love-that-release-aab
+          path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
