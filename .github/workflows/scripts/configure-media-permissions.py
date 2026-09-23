@@ -1,116 +1,71 @@
 
-#!/usr/bin/env python3
+      - name: Configure media permissions
+        run: |
+          python3 "${{ steps.locate_permissions_script.outputs.script }}" .
 
-from pathlib import Path
-import sys
-import xml.etree.ElementTree as ET
+      - name: Repair and validate Android namespace
+        working-directory: android/app/src/main
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import xml.etree.ElementTree as ET
 
+          path = Path("AndroidManifest.xml")
+          android_ns = "http://schemas.android.com/apk/res/android"
 
-ANDROID_NS = "http://schemas.android.com/apk/res/android"
-ET.register_namespace("android", ANDROID_NS)
+          content = path.read_text(encoding="utf-8")
 
+          # Locate the opening manifest element.
+          match = re.search(
+              r"<manifest\b[^>]*>",
+              content,
+              flags=re.IGNORECASE,
+          )
 
-def android_attr(name):
-    return f"{{{ANDROID_NS}}}{name}"
+          if not match:
+              raise SystemExit(
+                  "ERROR: Opening <manifest> element not found"
+              )
 
+          opening_tag = match.group(0)
 
-def find_manifest(project_root):
-    path = (
-        project_root
-        / "android"
-        / "app"
-        / "src"
-        / "main"
-        / "AndroidManifest.xml"
-    )
+          # Add the namespace only when it is absent.
+          if "xmlns:android" not in opening_tag:
+              repaired_tag = opening_tag[:-1].rstrip()
 
-    if not path.is_file():
-        raise FileNotFoundError(f"Manifest not found: {path}")
+              if repaired_tag.endswith("/"):
+                  repaired_tag = repaired_tag[:-1].rstrip()
 
-    return path
+              repaired_tag += (
+                  f' xmlns:android="{android_ns}">'
+              )
 
+              content = (
+                  content[:match.start()]
+                  + repaired_tag
+                  + content[match.end():]
+              )
 
-def configure_permissions(project_root):
-    manifest_path = find_manifest(project_root)
+              path.write_text(content, encoding="utf-8")
 
-    # Parse existing XML.
-    tree = ET.parse(manifest_path)
-    root = tree.getroot()
+              print("Added missing android namespace declaration.")
+          else:
+              print("Android namespace declaration already present.")
 
-    # Confirm the correct root element.
-    if root.tag != "manifest" and not root.tag.endswith("}manifest"):
-        raise RuntimeError(
-            f"Unexpected root element: {root.tag}"
-        )
+          # Parse the repaired manifest.
+          tree = ET.parse(path)
+          root = tree.getroot()
 
-    # Confirm the Android namespace exists on attributes.
-    for element in root.iter():
-        for attribute in element.attrib:
-            if attribute.startswith("{"):
-                namespace = attribute.split("}", 1)[0][1:]
+          if root.tag != "manifest" and not root.tag.endswith("}manifest"):
+              raise SystemExit(
+                  f"Unexpected root element: {root.tag!r}"
+              )
 
-                if namespace == ANDROID_NS:
-                    continue
+          print("AndroidManifest.xml is valid XML.")
+          PY
 
-    # Permissions to add.
-    permissions = [
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_MEDIA_VIDEO",
-    ]
-
-    # Read existing permission names.
-    existing = set()
-
-    for element in root:
-        if element.tag == "uses-permission" or element.tag.endswith(
-            "}uses-permission"
-        ):
-            name = element.get(android_attr("name"))
-
-            if name:
-                existing.add(name)
-
-    # Add missing permissions using XML elements and namespaced attributes.
-    for permission in permissions:
-        if permission in existing:
-            print(f"Already present: {permission}")
-            continue
-
-        permission_element = ET.Element(
-            "uses-permission",
-            {
-                android_attr("name"): permission,
-            },
-        )
-
-        root.append(permission_element)
-
-        print(f"Added: {permission}")
-
-    # Write the existing XML tree.
-    tree.write(
-        manifest_path,
-        encoding="utf-8",
-        xml_declaration=True,
-    )
-
-    # Validate the saved manifest.
-    ET.parse(manifest_path)
-
-    print(f"Updated and validated: {manifest_path}")
-
-
-def main():
-    project_root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
-
-    try:
-        configure_permissions(project_root)
-    except (ET.ParseError, OSError, RuntimeError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        return 1
-
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+      - name: Print final Android manifest
+        run: |
+          echo "===== FINAL MANIFEST ====="
+          nl -ba android/app/src/main/AndroidManifest.xml
