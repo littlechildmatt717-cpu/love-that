@@ -1,71 +1,121 @@
+
 #!/usr/bin/env python3
+
+"""
+Configure Android media permissions safely.
+
+Usage:
+    python3 scripts/configure-media-permissions.py .
+
+The script:
+- Locates android/app/src/main/AndroidManifest.xml
+- Parses the existing XML
+- Adds required media permissions if missing
+- Uses the Android XML namespace correctly
+- Writes the manifest back as valid XML
+"""
 
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
 
+
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
-ANDROID_ATTR = f"{{{ANDROID_NS}}}name"
+
 ET.register_namespace("android", ANDROID_NS)
 
-PERMISSIONS = (
-    "android.permission.READ_MEDIA_IMAGES",
-    "android.permission.READ_MEDIA_VIDEO",
-)
+
+def android_attribute(name: str) -> str:
+    """Return a fully qualified Android XML attribute name."""
+    return f"{{{ANDROID_NS}}}{name}"
 
 
-def get_manifest(project_root: Path) -> Path:
-    path = project_root / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
-    if not path.is_file():
-        raise FileNotFoundError(f"AndroidManifest.xml not found: {path}")
-    return path
+def find_manifest(project_root: Path) -> Path:
+    """Locate the generated Android manifest."""
+    manifest = (
+        project_root
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "AndroidManifest.xml"
+    )
+
+    if not manifest.is_file():
+        raise FileNotFoundError(
+            f"AndroidManifest.xml not found: {manifest}"
+        )
+
+    return manifest
 
 
-def configure_manifest(path: Path) -> None:
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError as exc:
-        raise RuntimeError(f"Manifest is invalid before modification: {exc}") from exc
+def configure_media_permissions(project_root: Path) -> None:
+    """Add media permissions to the existing Android manifest."""
+    manifest_path = find_manifest(project_root)
 
+    # Parse existing XML. This fails safely if the file is malformed.
+    tree = ET.parse(manifest_path)
     root = tree.getroot()
-    if root.tag != "manifest":
-        raise RuntimeError(f"Unexpected root element: {root.tag}")
 
-    existing = {
-        element.attrib.get(ANDROID_ATTR)
+    if (
+        root.tag != "manifest"
+        and not root.tag.endswith("}manifest")
+    ):
+        raise RuntimeError(
+            f"Unexpected manifest root element: {root.tag}"
+        )
+
+    # Permissions required by the application.
+    permissions = [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+    ]
+
+    existing_permissions = {
+        element.get(android_attribute("name"))
         for element in root.findall("uses-permission")
     }
 
-    additions = []
-    for permission_name in PERMISSIONS:
-        if permission_name in existing:
-            print(f"Permission already present: {permission_name}")
+    for permission in permissions:
+        if permission in existing_permissions:
+            print(f"Permission already exists: {permission}")
             continue
 
-        permission = ET.Element("uses-permission")
-        permission.set(ANDROID_ATTR, permission_name)
-        root.insert(0, permission)
-        additions.append(permission_name)
+        ET.SubElement(
+            root,
+            "uses-permission",
+            {
+                android_attribute("name"): permission,
+            },
+        )
 
-    tree.write(path, encoding="utf-8", xml_declaration=True)
+        print(f"Added permission: {permission}")
 
-    try:
-        ET.parse(path)
-    except ET.ParseError as exc:
-        raise RuntimeError(f"Manifest is invalid after modification: {exc}") from exc
+    # Write the existing manifest back using XML serialization.
+    tree.write(
+        manifest_path,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
 
-    for permission_name in additions:
-        print(f"Added permission: {permission_name}")
-    print("AndroidManifest.xml updated and validated successfully.")
+    # Verify the saved file can be parsed again.
+    ET.parse(manifest_path)
+
+    print(f"Successfully updated: {manifest_path}")
+    print("Final manifest is valid XML")
 
 
 def main() -> int:
     project_root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
+
     try:
-        configure_manifest(get_manifest(project_root))
-    except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        configure_media_permissions(project_root)
+    except (ET.ParseError, OSError, RuntimeError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
         return 1
+
     return 0
 
 
