@@ -1,3 +1,4 @@
+
 name: Build love that Android
 
 on:
@@ -55,20 +56,37 @@ jobs:
           from pathlib import Path
 
           path = Path("AndroidManifest.xml")
+
           if not path.is_file():
               raise SystemExit(f"Missing manifest: {path}")
 
           try:
-              ET.parse(path)
+              tree = ET.parse(path)
+              root = tree.getroot()
           except ET.ParseError as error:
               print(path.read_text(encoding="utf-8"))
               raise SystemExit(f"Invalid AndroidManifest.xml: {error}")
 
+          if root.tag != "manifest" and not root.tag.endswith("}manifest"):
+              raise SystemExit(f"Unexpected root element: {root.tag!r}")
+
           print("Generated AndroidManifest.xml is valid XML.")
           PY
 
+      - name: Locate media permissions script
+        id: locate_permissions_script
+        run: |
+          if [ -f scripts/configure-media-permissions.py ]; then
+            echo "script=scripts/configure-media-permissions.py" >> "$GITHUB_OUTPUT"
+          elif [ -f .github/workflows/scripts/configure-media-permissions.py ]; then
+            echo "script=.github/workflows/scripts/configure-media-permissions.py" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: configure-media-permissions.py not found"
+            exit 1
+          fi
+
       - name: Configure media permissions
-        run: python3 .github/workflows/scripts/configure-media-permissions.py .
+        run: python3 "${{ steps.locate_permissions_script.outputs.script }}" .
 
       - name: Validate final Android manifest
         working-directory: android/app/src/main
@@ -78,19 +96,35 @@ jobs:
           from pathlib import Path
 
           path = Path("AndroidManifest.xml")
+
           try:
               tree = ET.parse(path)
-              if tree.getroot().tag != "manifest":
-                  raise ValueError(f"Unexpected root element: {tree.getroot().tag!r}")
-          except (ET.ParseError, ValueError) as error:
+              root = tree.getroot()
+          except ET.ParseError as error:
               print(path.read_text(encoding="utf-8"))
               raise SystemExit(f"Invalid AndroidManifest.xml: {error}")
+
+          if root.tag != "manifest" and not root.tag.endswith("}manifest"):
+              raise SystemExit(f"Unexpected root element: {root.tag!r}")
 
           print("Final AndroidManifest.xml is valid XML.")
           PY
 
       - name: Print final Android manifest
-        run: cat android/app/src/main/AndroidManifest.xml
+        run: |
+          echo "===== MAIN MANIFEST ====="
+          nl -ba android/app/src/main/AndroidManifest.xml
+
+      - name: Diagnose all Android manifests
+        run: |
+          echo "===== ALL ANDROID MANIFESTS ====="
+          find android -name "AndroidManifest.xml" -type f -print
+
+          while IFS= read -r manifest; do
+            echo ""
+            echo "===== $manifest ====="
+            head -n 20 "$manifest"
+          done < <(find android -name "AndroidManifest.xml" -type f)
 
       - name: Make Gradle executable
         run: chmod +x android/gradlew
