@@ -26,16 +26,6 @@ jobs:
           node --version
           npm --version
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: gradle
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install dependencies
         run: |
           set -euo pipefail
@@ -51,23 +41,32 @@ jobs:
       - name: Build web application
         run: npm run build
 
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Add Android platform
         run: |
-          set -e
+          set -euo pipefail
+
           if [ ! -d android ]; then
+            echo "Android directory does not exist."
+            echo "Creating Android project with Capacitor..."
             npx cap add android
+          else
+            echo "Android directory already exists."
           fi
 
       - name: Sync Capacitor Android
         run: |
-          set -e
+          set -euo pipefail
           npx cap sync android
 
-      # IMPORTANT:
-      # Do not run the old configure-media-permissions.py script.
-      # Do not rewrite the entire XML document with ElementTree.
-      # Capacitor generates the manifest and this step makes only
-      # controlled edits to the generated text.
       - name: Repair Android manifest safely
         shell: bash
         run: |
@@ -81,7 +80,7 @@ jobs:
           fi
 
           echo "============================================================"
-          echo "GENERATED MANIFEST"
+          echo "MANIFEST BEFORE REPAIR"
           echo "============================================================"
           nl -ba "$MANIFEST"
 
@@ -93,23 +92,21 @@ jobs:
           path = Path(sys.argv[1])
           text = path.read_text(encoding="utf-8")
 
-          # ---------------------------------------------------------
-          # Remove any old media permission lines that may have been
-          # injected by an earlier script. We then add exactly one
-          # clean copy of each permission.
-          # ---------------------------------------------------------
-          permission_names = [
+          permissions = [
               "android.permission.READ_MEDIA_IMAGES",
               "android.permission.READ_MEDIA_VIDEO",
           ]
 
-          for permission in permission_names:
+          # Remove existing copies of the two media permissions.
+          # They will be added back exactly once.
+          for permission in permissions:
               pattern = (
                   r'^[ \t]*<uses-permission\b'
                   r'[^>]*android:name\s*=\s*["\']'
                   + re.escape(permission)
                   + r'["\'][^>]*/?>[ \t]*\r?\n?'
               )
+
               text = re.sub(
                   pattern,
                   "",
@@ -117,10 +114,7 @@ jobs:
                   flags=re.MULTILINE,
               )
 
-          # ---------------------------------------------------------
-          # Find the opening <manifest ...> tag.
-          # We deliberately do NOT rebuild the whole XML document.
-          # ---------------------------------------------------------
+          # Find the opening <manifest> element.
           match = re.search(
               r'<manifest\b[^>]*>',
               text,
@@ -128,15 +122,14 @@ jobs:
           )
 
           if not match:
-              print("::error::Could not find the opening <manifest> element.")
+              print(
+                  "::error::Could not find the opening <manifest> element."
+              )
               sys.exit(1)
 
           manifest_tag = match.group(0)
 
-          # ---------------------------------------------------------
-          # Ensure exactly one Android namespace declaration.
-          # Handle single quotes, double quotes, and whitespace.
-          # ---------------------------------------------------------
+          # Check for the Android namespace.
           namespace_pattern = (
               r'\s+xmlns:android\s*=\s*'
               r'(["\'])'
@@ -148,8 +141,15 @@ jobs:
               re.finditer(namespace_pattern, manifest_tag)
           )
 
+          if len(namespace_matches) > 1:
+              print(
+                  "::error::Multiple xmlns:android declarations "
+                  "were found."
+              )
+              print(manifest_tag)
+              sys.exit(1)
+
           if len(namespace_matches) == 0:
-              # Add the namespace immediately before the closing >.
               repaired_tag = manifest_tag[:-1].rstrip()
               repaired_tag += (
                   ' xmlns:android='
@@ -162,30 +162,24 @@ jobs:
                   + text[match.end():]
               )
 
-              # Recalculate the manifest opening tag.
               match = re.search(
                   r'<manifest\b[^>]*>',
                   text,
                   flags=re.IGNORECASE,
               )
-              manifest_tag = match.group(0)
 
-              print("Added missing Android namespace declaration.")
+              if not match:
+                  print(
+                      "::error::Unable to locate repaired "
+                      "<manifest> element."
+                  )
+                  sys.exit(1)
 
-          elif len(namespace_matches) > 1:
-              print(
-                  "::error::Multiple xmlns:android declarations were found "
-                  "on the manifest root."
-              )
-              print(manifest_tag)
-              sys.exit(1)
+              print("Added missing Android namespace.")
           else:
-              print("Android namespace declaration is present.")
+              print("Android namespace already present.")
 
-          # ---------------------------------------------------------
-          # Add permissions immediately after the opening <manifest>
-          # element. They remain direct children of <manifest>.
-          # ---------------------------------------------------------
+          # Add the permissions directly under <manifest>.
           permissions_xml = (
               "\n"
               '    <uses-permission '
@@ -200,20 +194,17 @@ jobs:
               + text[match.end():]
           )
 
-          # ---------------------------------------------------------
-          # Write without changing the rest of the generated XML.
-          # ---------------------------------------------------------
+          # Write the file without rebuilding the entire XML document.
           path.write_text(text, encoding="utf-8")
 
-          print("Manifest permissions repaired successfully.")
+          print("Android manifest repair completed.")
           PY
 
           echo "============================================================"
-          echo "MANIFEST AFTER SAFE REPAIR"
+          echo "MANIFEST AFTER REPAIR"
           echo "============================================================"
           nl -ba "$MANIFEST"
 
-      # Python's parser catches malformed XML before Gradle.
       - name: Validate manifest with Python XML parser
         shell: bash
         run: |
@@ -232,7 +223,7 @@ jobs:
               tree = ET.parse(path)
               root = tree.getroot()
           except ET.ParseError as error:
-              print("::error::Python XML validation failed.")
+              print("::error::AndroidManifest.xml is invalid XML.")
               print(f"::error::{error}")
               print("")
               print("===== COMPLETE MANIFEST =====")
@@ -253,11 +244,8 @@ jobs:
               sys.exit(1)
 
           print("Python XML validation PASSED.")
-          print(f"Root element: {root.tag}")
           PY
 
-      # Java uses the same XML parser family involved in the Gradle
-      # failure. Test the actual file before Gradle sees it.
       - name: Validate manifest with Java XML parser
         shell: bash
         run: |
@@ -308,7 +296,6 @@ jobs:
           javac "$VALIDATOR"
           java -cp "$RUNNER_TEMP" ManifestXmlValidator "$MANIFEST"
 
-      # Structural checks before Gradle.
       - name: Strict manifest structure check
         shell: bash
         run: |
@@ -333,18 +320,16 @@ jobs:
                   f"Invalid root element: {root.tag}"
               )
 
-          # Find the Android namespace by inspecting namespaced
-          # attributes produced by the XML parser.
           android_attributes = [
-              attr
+              attribute
               for element in root.iter()
-              for attr in element.attrib
-              if attr.startswith(f"{{{android_ns}}}")
+              for attribute in element.attrib
+              if attribute.startswith(f"{{{android_ns}}}")
           ]
 
           if not android_attributes:
               raise SystemExit(
-                  "No attributes using the Android namespace were found."
+                  "No Android namespace attributes were found."
               )
 
           required = {
@@ -360,33 +345,24 @@ jobs:
                   if name:
                       direct_permissions.append(name)
 
-          missing = required - set(direct_permissions)
-
-          if missing:
-              raise SystemExit(
-                  f"Missing required permissions: {sorted(missing)}"
-              )
-
           for permission in required:
               count = direct_permissions.count(permission)
+
               if count != 1:
                   raise SystemExit(
-                      f"{permission} appears {count} times; expected exactly once."
+                      f"{permission} appears {count} times; "
+                      "expected exactly once."
                   )
 
-          # Ensure permissions were not accidentally placed inside
-          # the application element.
           application = root.find("application")
 
           if application is not None:
-              nested_permissions = application.findall(
-                  "uses-permission"
-              )
+              nested = application.findall("uses-permission")
 
-              if nested_permissions:
+              if nested:
                   raise SystemExit(
-                      "uses-permission was incorrectly nested inside "
-                      "<application>."
+                      "uses-permission is incorrectly nested "
+                      "inside <application>."
                   )
 
           print("============================================================")
@@ -397,7 +373,7 @@ jobs:
           print("Android namespace: PRESENT")
           print("READ_MEDIA_IMAGES: PRESENT ONCE")
           print("READ_MEDIA_VIDEO: PRESENT ONCE")
-          print("Permissions are direct children of <manifest>: YES")
+          print("Permissions directly under <manifest>: YES")
           print("============================================================")
           PY
 
