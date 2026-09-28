@@ -1,0 +1,22 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') return new Response('Method not allowed',{status:405});
+  const auth = req.headers.get('Authorization');
+  if (!auth) return new Response('Unauthorized',{status:401});
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {global:{headers:{Authorization:auth}}});
+  const {data:{user}} = await supabase.auth.getUser();
+  if (!user) return new Response('Unauthorized',{status:401});
+  const {to_user} = await req.json();
+  if (!to_user || to_user === user.id) return new Response('Invalid target',{status:400});
+  const {data:block} = await supabase.from('blocks').select('id').or(`and(blocker_id.eq.${user.id},blocked_id.eq.${to_user}),and(blocker_id.eq.${to_user},blocked_id.eq.${user.id})`).maybeSingle();
+  if (block) return new Response(JSON.stringify({matched:false}),{headers:{'content-type':'application/json'}});
+  const {error:likeError} = await supabase.from('likes').upsert({from_user:user.id,to_user},{onConflict:'from_user,to_user'});
+  if (likeError) return new Response(likeError.message,{status:400});
+  const {data:reciprocal} = await supabase.from('likes').select('id').eq('from_user',to_user).eq('to_user',user.id).maybeSingle();
+  if (!reciprocal) return new Response(JSON.stringify({matched:false}),{headers:{'content-type':'application/json'}});
+  const [a,b] = user.id < to_user ? [user.id,to_user] : [to_user,user.id];
+  const {data:match,error} = await supabase.from('matches').upsert({user_a:a,user_b:b},{onConflict:'user_a,user_b'}).select().single();
+  if (error) return new Response(error.message,{status:400});
+  await supabase.from('conversations').upsert({match_id:match.id},{onConflict:'match_id'});
+  return new Response(JSON.stringify({matched:true,match}),{headers:{'content-type':'application/json'}});
+});
