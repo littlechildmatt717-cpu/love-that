@@ -1,0 +1,314 @@
+name: Build love that Android
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  android-release:
+    name: Android release build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Add Android platform
+        run: |
+          set -e
+          if [ ! -d android ]; then
+            echo "Android directory does not exist. Creating it with Capacitor..."
+            npx cap add android
+          else
+            echo "Android directory already exists."
+          fi
+
+      - name: Sync Capacitor Android
+        run: |
+          set -e
+          npx cap sync android
+
+      # Do NOT use a regex/text replacement to modify xmlns:android.
+      # Capacitor generates the manifest. We parse and modify it as XML instead.
+      - name: Repair and configure Android manifest
+        run: |
+          set -e
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::AndroidManifest.xml was not generated."
+            exit 1
+          fi
+
+          echo "============================================================"
+          echo "MANIFEST BEFORE REPAIR"
+          echo "============================================================"
+          nl -ba "$MANIFEST"
+
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          android_ns = "http://schemas.android.com/apk/res/android"
+          android_name = f"{{{android_ns}}}name"
+
+          ET.register_namespace("android", android_ns)
+
+          print(f"Processing: {manifest}")
+
+          # ---------------------------------------------------------
+          # 1. Parse the generated manifest.
+          # ---------------------------------------------------------
+          try:
+              tree = ET.parse(manifest)
+              root = tree.getroot()
+          except ET.ParseError as exc:
+              print("::error::Capacitor generated an invalid AndroidManifest.xml.")
+              print(f"::error::{exc}")
+              print("The manifest is invalid BEFORE our repair code changes it.")
+              sys.exit(1)
+
+          if root.tag != "manifest":
+              print(f"::error::Unexpected root element: {root.tag}")
+              sys.exit(1)
+
+          # ---------------------------------------------------------
+          # 2. Ensure the required media permissions exist.
+          # ---------------------------------------------------------
+          required_permissions = [
+              "android.permission.READ_MEDIA_IMAGES",
+              "android.permission.READ_MEDIA_VIDEO",
+          ]
+
+          existing_permissions = set()
+
+          for child in root:
+              if child.tag == "uses-permission":
+                  permission_name = child.attrib.get(android_name)
+                  if permission_name:
+                      existing_permissions.add(permission_name)
+
+          for permission_name in required_permissions:
+              if permission_name not in existing_permissions:
+                  element = ET.Element(
+                      "uses-permission",
+                      {android_name: permission_name},
+                  )
+
+                  # Permissions belong directly under <manifest>.
+                  root.insert(0, element)
+
+                  print(f"Added permission: {permission_name}")
+              else:
+                  print(f"Permission already present: {permission_name}")
+
+          # ---------------------------------------------------------
+          # 3. Write the XML safely.
+          # ---------------------------------------------------------
+          tree.write(
+              manifest,
+              encoding="utf-8",
+              xml_declaration=True,
+          )
+
+          # ---------------------------------------------------------
+          # 4. Parse the written file again.
+          # ---------------------------------------------------------
+          try:
+              final_tree = ET.parse(manifest)
+              final_root = final_tree.getroot()
+          except ET.ParseError as exc:
+              print("::error::Manifest became invalid after repair.")
+              print(f"::error::{exc}")
+              sys.exit(1)
+
+          if final_root.tag != "manifest":
+              print(
+                  f"::error::Final manifest root is "
+                  f"{final_root.tag}, expected manifest."
+              )
+              sys.exit(1)
+
+          print("Manifest repair completed successfully.")
+          PY
+
+          echo "============================================================"
+          echo "MANIFEST AFTER REPAIR"
+          echo "============================================================"
+          nl -ba "$MANIFEST"
+
+      - name: Strict Android manifest validation
+        run: |
+          set -e
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          echo "============================================================"
+          echo "STRICT MANIFEST VALIDATION"
+          echo "============================================================"
+
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          path = Path("android/app/src/main/AndroidManifest.xml")
+          android_ns = "http://schemas.android.com/apk/res/android"
+          android_name = f"{{{android_ns}}}name"
+
+          if not path.is_file():
+              print("::error::AndroidManifest.xml does not exist.")
+              sys.exit(1)
+
+          try:
+              tree = ET.parse(path)
+              root = tree.getroot()
+          except ET.ParseError as exc:
+              print("::error::AndroidManifest.xml is NOT valid XML.")
+              print(f"::error::{exc}")
+
+              print("")
+              print("----- COMPLETE MANIFEST -----")
+              try:
+                  for number, line in enumerate(
+                      path.read_text(encoding="utf-8").splitlines(),
+                      1,
+                  ):
+                      print(f"{number:04d}: {line}")
+              except Exception as read_error:
+                  print(f"Unable to print manifest: {read_error}")
+
+              print("----- END MANIFEST -----")
+              sys.exit(1)
+
+          # Root must be <manifest>.
+          if root.tag != "manifest":
+              print(
+                  f"::error::Invalid root element: {root.tag}"
+              )
+              sys.exit(1)
+
+          # Check that Android namespace attributes are actually present.
+          android_attributes = []
+
+          for element in root.iter():
+              for attribute in element.attrib:
+                  if attribute.startswith(f"{{{android_ns}}}"):
+                      android_attributes.append(attribute)
+
+          if not android_attributes:
+              print(
+                  "::error::No Android namespace attributes were found."
+              )
+              print(
+                  "The manifest does not appear to contain "
+                  "the required Android namespace."
+              )
+              sys.exit(1)
+
+          # Check permissions are direct children of <manifest>.
+          required = {
+              "android.permission.READ_MEDIA_IMAGES",
+              "android.permission.READ_MEDIA_VIDEO",
+          }
+
+          direct_permissions = set()
+
+          for child in root:
+              if child.tag == "uses-permission":
+                  name = child.attrib.get(android_name)
+                  if name:
+                      direct_permissions.add(name)
+
+          missing = required - direct_permissions
+
+          if missing:
+              print(
+                  "::error::Required permissions are missing "
+                  f"from the manifest: {sorted(missing)}"
+              )
+              sys.exit(1)
+
+          # Check for duplicate direct permissions.
+          permission_names = [
+              child.attrib.get(android_name)
+              for child in root
+              if child.tag == "uses-permission"
+              and child.attrib.get(android_name)
+          ]
+
+          duplicates = sorted(
+              {
+                  name
+                  for name in permission_names
+                  if permission_names.count(name) > 1
+              }
+          )
+
+          if duplicates:
+              print(
+                  "::error::Duplicate uses-permission entries: "
+                  f"{duplicates}"
+              )
+              sys.exit(1)
+
+          print("VALIDATION PASSED")
+          print(f"Root element: {root.tag}")
+          print(
+              "Android namespace attributes: "
+              f"{len(android_attributes)}"
+          )
+          print("Required media permissions are present.")
+          print("Permissions are direct children of <manifest>.")
+          print("No duplicate media permissions found.")
+          PY
+
+          echo "============================================================"
+          echo "FINAL MANIFEST"
+          echo "============================================================"
+          nl -ba "$MANIFEST"
+
+      - name: Check Gradle wrapper
+        run: |
+          set -e
+
+          if [ ! -f android/gradlew ]; then
+            echo "::error::android/gradlew was not found."
+            exit 1
+          fi
+
+          chmod +x android/gradlew
+
+      - name: Build Android release bundle
+        working-directory: android
+        run: |
+          set -e
+          ./gradlew --no-daemon --stacktrace bundleRelease
