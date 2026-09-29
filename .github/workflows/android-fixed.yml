@@ -2,9 +2,7 @@ name: Build love that Android
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -29,14 +27,9 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
-
-          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-            echo "npm lockfile found. Using npm ci."
-            npm ci
-          else
-            echo "No npm lockfile found. Using npm install."
-            npm install
-          fi
+          echo "Installing dependencies with npm install."
+          npm install --no-audit --no-fund
+          echo "Dependencies installed successfully."
 
       - name: Build web application
         run: npm run build
@@ -53,40 +46,22 @@ jobs:
       - name: Add Android platform
         run: |
           set -euo pipefail
-
           if [ ! -d android ]; then
-            echo "Android directory does not exist."
-            echo "Creating Android project with Capacitor..."
             npx cap add android
-          else
-            echo "Android directory already exists."
           fi
 
       - name: Sync Capacitor Android
-        run: |
-          set -euo pipefail
-          npx cap sync android
+        run: npx cap sync android
 
       - name: Repair Android manifest safely
         shell: bash
         run: |
           set -euo pipefail
-
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-
-          if [ ! -f "$MANIFEST" ]; then
-            echo "::error::AndroidManifest.xml was not generated."
-            exit 1
-          fi
-
-          echo "============================================================"
-          echo "MANIFEST BEFORE REPAIR"
-          echo "============================================================"
-          nl -ba "$MANIFEST"
+          test -f "$MANIFEST"
 
           python3 - "$MANIFEST" <<'PY'
-          import re
-          import sys
+          import re, sys
           from pathlib import Path
 
           path = Path(sys.argv[1])
@@ -97,8 +72,6 @@ jobs:
               "android.permission.READ_MEDIA_VIDEO",
           ]
 
-          # Remove existing copies of the two media permissions.
-          # They will be added back exactly once.
           for permission in permissions:
               pattern = (
                   r'^[ \t]*<uses-permission\b'
@@ -106,143 +79,46 @@ jobs:
                   + re.escape(permission)
                   + r'["\'][^>]*/?>[ \t]*\r?\n?'
               )
+              text = re.sub(pattern, "", text, flags=re.MULTILINE)
 
-              text = re.sub(
-                  pattern,
-                  "",
-                  text,
-                  flags=re.MULTILINE,
-              )
-
-          # Find the opening <manifest> element.
-          match = re.search(
-              r'<manifest\b[^>]*>',
-              text,
-              flags=re.IGNORECASE,
-          )
-
+          match = re.search(r'<manifest\b[^>]*>', text, re.IGNORECASE)
           if not match:
-              print(
-                  "::error::Could not find the opening <manifest> element."
-              )
-              sys.exit(1)
+              raise SystemExit("::error::No <manifest> root element found.")
 
-          manifest_tag = match.group(0)
-
-          # Check for the Android namespace.
-          namespace_pattern = (
-              r'\s+xmlns:android\s*=\s*'
-              r'(["\'])'
-              r'http://schemas\.android\.com/apk/res/android'
-              r'\1'
+          tag = match.group(0)
+          ns = re.findall(
+              r'\s+xmlns:android\s*=\s*(["\'])'
+              r'http://schemas\.android\.com/apk/res/android\1',
+              tag,
           )
 
-          namespace_matches = list(
-              re.finditer(namespace_pattern, manifest_tag)
-          )
+          if len(ns) > 1:
+              raise SystemExit("::error::Duplicate xmlns:android declarations found.")
 
-          if len(namespace_matches) > 1:
-              print(
-                  "::error::Multiple xmlns:android declarations "
-                  "were found."
+          if len(ns) == 0:
+              repaired = tag[:-1].rstrip() + (
+                  ' xmlns:android="http://schemas.android.com/apk/res/android">'
               )
-              print(manifest_tag)
-              sys.exit(1)
+              text = text[:match.start()] + repaired + text[match.end():]
+              match = re.search(r'<manifest\b[^>]*>', text, re.IGNORECASE)
 
-          if len(namespace_matches) == 0:
-              repaired_tag = manifest_tag[:-1].rstrip()
-              repaired_tag += (
-                  ' xmlns:android='
-                  '"http://schemas.android.com/apk/res/android">'
-              )
-
-              text = (
-                  text[:match.start()]
-                  + repaired_tag
-                  + text[match.end():]
-              )
-
-              match = re.search(
-                  r'<manifest\b[^>]*>',
-                  text,
-                  flags=re.IGNORECASE,
-              )
-
-              if not match:
-                  print(
-                      "::error::Unable to locate repaired "
-                      "<manifest> element."
-                  )
-                  sys.exit(1)
-
-              print("Added missing Android namespace.")
-          else:
-              print("Android namespace already present.")
-
-          # Add the permissions directly under <manifest>.
           permissions_xml = (
-              "\n"
-              '    <uses-permission '
-              'android:name="android.permission.READ_MEDIA_IMAGES" />\n'
-              '    <uses-permission '
-              'android:name="android.permission.READ_MEDIA_VIDEO" />\n'
+              '\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />'
+              '\n    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n'
           )
-
-          text = (
-              text[:match.end()]
-              + permissions_xml
-              + text[match.end():]
-          )
-
-          # Write the file without rebuilding the entire XML document.
+          text = text[:match.end()] + permissions_xml + text[match.end():]
           path.write_text(text, encoding="utf-8")
-
-          print("Android manifest repair completed.")
           PY
 
-          echo "============================================================"
-          echo "MANIFEST AFTER REPAIR"
-          echo "============================================================"
+          echo "===== FINAL MANIFEST ====="
           nl -ba "$MANIFEST"
 
-      - name: Validate manifest with Python XML parser
-        shell: bash
+      - name: Validate manifest with Python
         run: |
           set -euo pipefail
-
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-
-          python3 - "$MANIFEST" <<'PY'
-          import sys
+          python3 - <<'PY'
           import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          path = Path(sys.argv[1])
-
-          try:
-              tree = ET.parse(path)
-              root = tree.getroot()
-          except ET.ParseError as error:
-              print("::error::AndroidManifest.xml is invalid XML.")
-              print(f"::error::{error}")
-              print("")
-              print("===== COMPLETE MANIFEST =====")
-
-              for number, line in enumerate(
-                  path.read_text(encoding="utf-8").splitlines(),
-                  1,
-              ):
-                  print(f"{number:04d}: {line}")
-
-              print("===== END MANIFEST =====")
-              sys.exit(1)
-
-          if root.tag != "manifest":
-              print(
-                  f"::error::Unexpected root element: {root.tag}"
-              )
-              sys.exit(1)
-
+          ET.parse("android/app/src/main/AndroidManifest.xml")
           print("Python XML validation PASSED.")
           PY
 
@@ -250,156 +126,72 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          MANIFEST="$PWD/android/app/src/main/AndroidManifest.xml"
-          VALIDATOR="$RUNNER_TEMP/ManifestXmlValidator.java"
-
-          cat > "$VALIDATOR" <<'JAVA'
+          cat > "$RUNNER_TEMP/ManifestXmlValidator.java" <<'JAVA'
           import java.io.File;
           import javax.xml.XMLConstants;
           import javax.xml.parsers.DocumentBuilderFactory;
 
           public class ManifestXmlValidator {
               public static void main(String[] args) throws Exception {
-                  if (args.length != 1) {
-                      throw new IllegalArgumentException(
-                          "Manifest path is required"
-                      );
-                  }
-
-                  File manifest = new File(args[0]);
-
-                  if (!manifest.isFile()) {
-                      throw new IllegalStateException(
-                          "Manifest does not exist: " + manifest
-                      );
-                  }
-
-                  DocumentBuilderFactory factory =
-                      DocumentBuilderFactory.newInstance();
-
-                  factory.setNamespaceAware(true);
-                  factory.setFeature(
-                      XMLConstants.FEATURE_SECURE_PROCESSING,
-                      true
-                  );
-
-                  factory.newDocumentBuilder().parse(manifest);
-
-                  System.out.println(
-                      "Java XML validation PASSED: " + manifest
-                  );
+                  DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
+                  f.setNamespaceAware(true);
+                  f.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+                  f.newDocumentBuilder().parse(new File(args[0]));
+                  System.out.println("Java XML validation PASSED.");
               }
           }
           JAVA
-
-          javac "$VALIDATOR"
-          java -cp "$RUNNER_TEMP" ManifestXmlValidator "$MANIFEST"
+          javac "$RUNNER_TEMP/ManifestXmlValidator.java"
+          java -cp "$RUNNER_TEMP" ManifestXmlValidator "$PWD/android/app/src/main/AndroidManifest.xml"
 
       - name: Strict manifest structure check
-        shell: bash
         run: |
           set -euo pipefail
-
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-
-          python3 - "$MANIFEST" <<'PY'
-          import sys
+          python3 - <<'PY'
           import xml.etree.ElementTree as ET
-          from pathlib import Path
 
-          path = Path(sys.argv[1])
-          android_ns = "http://schemas.android.com/apk/res/android"
-          android_name = f"{{{android_ns}}}name"
-
-          tree = ET.parse(path)
-          root = tree.getroot()
+          path = "android/app/src/main/AndroidManifest.xml"
+          root = ET.parse(path).getroot()
+          ns = "http://schemas.android.com/apk/res/android"
+          name = f"{{{ns}}}name"
 
           if root.tag != "manifest":
-              raise SystemExit(
-                  f"Invalid root element: {root.tag}"
-              )
+              raise SystemExit("Invalid manifest root.")
 
-          android_attributes = [
-              attribute
-              for element in root.iter()
-              for attribute in element.attrib
-              if attribute.startswith(f"{{{android_ns}}}")
+          permissions = [
+              c.attrib.get(name)
+              for c in root
+              if c.tag == "uses-permission"
           ]
-
-          if not android_attributes:
-              raise SystemExit(
-                  "No Android namespace attributes were found."
-              )
 
           required = {
               "android.permission.READ_MEDIA_IMAGES",
               "android.permission.READ_MEDIA_VIDEO",
           }
 
-          direct_permissions = []
-
-          for child in root:
-              if child.tag == "uses-permission":
-                  name = child.attrib.get(android_name)
-                  if name:
-                      direct_permissions.append(name)
-
           for permission in required:
-              count = direct_permissions.count(permission)
-
-              if count != 1:
+              if permissions.count(permission) != 1:
                   raise SystemExit(
-                      f"{permission} appears {count} times; "
-                      "expected exactly once."
+                      f"{permission} must appear exactly once."
                   )
 
-          application = root.find("application")
+          app = root.find("application")
+          if app is not None and app.findall("uses-permission"):
+              raise SystemExit(
+                  "uses-permission is incorrectly inside <application>."
+              )
 
-          if application is not None:
-              nested = application.findall("uses-permission")
-
-              if nested:
-                  raise SystemExit(
-                      "uses-permission is incorrectly nested "
-                      "inside <application>."
-                  )
-
-          print("============================================================")
-          print("STRICT MANIFEST CHECK PASSED")
-          print("============================================================")
-          print("Valid XML: YES")
-          print("Root element: manifest")
-          print("Android namespace: PRESENT")
-          print("READ_MEDIA_IMAGES: PRESENT ONCE")
-          print("READ_MEDIA_VIDEO: PRESENT ONCE")
-          print("Permissions directly under <manifest>: YES")
-          print("============================================================")
+          print("Strict manifest validation PASSED.")
           PY
 
-          echo "============================================================"
-          echo "FINAL MANIFEST BEFORE GRADLE"
-          echo "============================================================"
-          nl -ba "$MANIFEST"
-
       - name: Check Gradle wrapper
-        shell: bash
         run: |
           set -euo pipefail
-
-          if [ ! -f android/gradlew ]; then
-            echo "::error::android/gradlew was not found."
-            exit 1
-          fi
-
+          test -f android/gradlew
           chmod +x android/gradlew
 
       - name: Build Android release bundle
         working-directory: android
         run: |
           set -euo pipefail
-
-          ./gradlew \
-            --no-daemon \
-            --stacktrace \
-            bundleRelease
+          ./gradlew --no-daemon --stacktrace bundleRelease
