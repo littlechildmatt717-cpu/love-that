@@ -26,22 +26,13 @@ jobs:
           node --version
           npm --version
 
-             - name: Install dependencies
-      - name: Ensure TypeScript is available
+      - name: Install dependencies
         run: |
           set -euo pipefail
-
-          echo "Checking TypeScript..."
-
-          if [ -x "./node_modules/.bin/tsc" ]; then
-            echo "TypeScript is already installed."
-          else
-            echo "TypeScript is missing."
-            echo "Installing TypeScript for the CI build..."
-            npm install --no-save --no-audit --no-fund typescript
-          fi
-
-          ./node_modules/.bin/tsc --version
+          echo "Installing dependencies with npm install."
+          echo "This also reconciles package.json and package-lock.json if required."
+          npm install --no-audit --no-fund
+          echo "Dependencies installed successfully."
 
       - name: Build web application
         run: npm run build
