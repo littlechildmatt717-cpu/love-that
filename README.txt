@@ -1,19 +1,21 @@
-LOVE THAT - AUTH + LOGO REPLACEMENT FILES
+love that - profile, preferences and media upload fix
 
-REPLACE:
+Replace/upload:
   src/main.jsx
 
-ADD/REPLACE:
-  resources/icon.png
-  resources/icon-192.png
-  resources/icon-512.png
+Add/run in Supabase:
+  expand_profiles_for_richer_dating_preferences.sql
 
-ANDROID LAUNCHER ICONS:
-  android-res/mipmap-mdpi/*
-  android-res/mipmap-hdpi/*
-  android-res/mipmap-xhdpi/*
-  android-res/mipmap-xxhdpi/*
-  android-res/mipmap-xxxhdpi/*
+The SQL migration has already been applied to the connected Supabase project used by this app.
 
-IMPORTANT:
-Your GitHub Actions workflow currently generates the android/ directory with Capacitor when it is missing. Therefore, do not rely on manually uploading android/app/src/main/res/... to the repository unless the android directory is committed. The build workflow should copy these supplied icon files into the generated Android project before Gradle runs.
+This update adds:
+- Rich profile editing: name, age, height, body type, religion, marital status, job title, bio, interests and hobbies.
+- Multiple-choice looking-for preferences, including men, women, men & women and double dates.
+- Multiple body-type preferences.
+- Multiple attractive-trait choices.
+- Better profile-name/session recovery for accounts whose profile row is missing or has a blank name.
+- Photo uploads without createImageBitmap/canvas conversion, which avoids Android WebView upload failures on unsupported image formats.
+- Multiple profile photos with delete support.
+- Video uploads using the original file and a safer upload ID fallback.
+- Existing video moderation flow is preserved.
+- Existing LT logo resources are included.
