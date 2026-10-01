@@ -689,4 +689,5 @@ function Home({ me, choose, openShorts, openRoom, openSpeed, openDateNight, setP
 }
 
 function DateNight({ me, openChat, startCall, back }) {
-  const [enabled, setEnabled] = useState(!!me
+const [enabled, setEnabled] = useState(!!me)
+
