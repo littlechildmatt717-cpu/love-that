@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
-import { 
-  Heart, Users, UsersRound, Flame, MessageCircle, UserRound, Settings, ArrowLeft, Shield, Send, X, 
-  Sparkles, Play, Video, Image as ImageIcon, Smile, Link as LinkIcon, Camera, RefreshCw
+import {
+  Heart, Users, UsersRound, Flame, MessageCircle, UserRound, Settings, ArrowLeft, Shield, Send, X,
+  Sparkles, Play, Video, Image as ImageIcon, RefreshCw
 } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import './styles.css'
@@ -18,7 +18,7 @@ const identities = ['Woman','Man','Non-binary','Trans woman','Trans man']
 const seeking = ['Men','Women','Men & women','Double dates','Non-binary people','Everyone']
 const goals = ['A relationship','Casual dating','New friends','Flirty chat','Not sure yet']
 
-const identityDb = {Woman:'woman',Man:'man','Non-binary':'non_binary','Trans woman':'trans_woman','Trans man':'trans_man'}
+const identityDb = {Woman:'woman',Man:'man','Non-binary:'non_binary','Trans woman':'trans_woman','Trans man':'trans_man'}
 const goalDb = {'A relationship':'relationship','Casual dating':'casual_dating','New friends':'new_friends','Flirty chat':'flirty_chat','Not sure yet':'not_sure'}
 const seekingDb = {'Men':'men','Women':'women','Men & women':'men_women','Double dates':'double_dates','Non-binary people':'non_binary','Everyone':'everyone'}
 
@@ -130,15 +130,19 @@ function App() {
   }
 
   async function loadDiscover(p) {
+    setError('')
     const { data } = await supabase.from('profiles')
       .select('*').eq('is_active', true).neq('id', session.user.id).eq('platform', p).limit(30)
     setDiscover(await Promise.all((data || []).map(async x => ({ ...x, photo: await getPrimaryPhotoUrl(x.id) }))))
   }
 
   async function loadMatches() {
+    if (!session) return
     const { data } = await supabase.from('matches')
       .select('*').or(`user_a.eq.${session.user.id},user_b.eq.${session.user.id}`)
+      .order('created_at', { ascending: false })
     const ids = (data || []).map(m => m.user_a === session.user.id ? m.user_b : m.user_a)
+    if (!ids.length) { setMatches([]); return }
     const { data: ps } = await supabase.from('profiles').select('*').in('id', ids)
     setMatches(await Promise.all((ps || []).map(async p => ({ ...p, photo: await getPrimaryPhotoUrl(p.id) }))))
   }
@@ -160,10 +164,20 @@ function App() {
       {page === 'home' && <Home me={profile} choose={(p) => { setPlatform(p); setPage('discover'); loadDiscover(p) }} openShorts={() => setPage('shorts')} openChatRoom={() => setPage('chatroom')} />}
       {page === 'shorts' && <Shorts me={profile} back={() => setPage('home')} />}
       {page === 'discover' && <Discover me={profile} platform={platform} people={discover} like={async (p) => {
-        const r = await supabase.functions.invoke('like-user', { body: { to_user_id: p.id } })
-        if (r.data?.match) await loadMatches()
-        setDiscover(v => v.filter(x => x.id !== p.id))
-      }} back={() => setPage('home')} />}
+        setError('')
+        try {
+          const res = await supabase.functions.invoke('like-user', { body: { to_user_id: p.id } })
+          if (res.error) throw new Error(res.error.message || 'Function error — check like-user Edge Function')
+          if (res.data?.match) {
+            alert(`🎉 It's a match with ${p.display_name}!`)
+            await loadMatches()
+          }
+          setDiscover(v => v.filter(x => x.id !== p.id))
+        } catch (err) {
+          setError(`Could not like: ${err.message}`)
+          console.error('Like error:', err)
+        }
+      }} back={() => setPage('home')} refresh={loadDiscover} />}
       {page === 'matches' && <Matches people={matches} load={loadMatches} back={() => setPage('home')} />}
       {page === 'profile' && <Profile me={profile} photoUrl={profilePhotoUrl} bioVideo={bioVideo} onPhotoUpdate={setProfilePhotoUrl} onVideoUpdate={setBioVideo} />}
       {page === 'chatroom' && <ChatRoom me={profile} back={() => setPage('home')} />}
@@ -245,376 +259,4 @@ function Auth({ mode, setMode, error, setError, onReady }) {
           ))}</div>
           <div className="choice"><b>Looking for:</b>{seeking.map(x => {
             const sel = p.seeking.includes(x)
-            return <button type="button" className={sel?'sel':''} onClick={()=>setP({...p,seeking:sel?p.seeking.filter(y=>y!==x):[...p.seeking,x]})} key={x}>{sel?'✓ ':''}{x}</button>
-          })}</div>
-          <div className="choice"><b>My goal:</b>{goals.map(x => (
-            <button type="button" className={p.goal===x?'sel':''} onClick={()=>setP({...p,goal:x})} key={x}>{x}</button>
-          ))}</div>
-        </>}
-        {error && <p className="error">{error}</p>}
-        <button className="primary" disabled={busy}>{busy?'Please wait…':mode==='login'?'Sign In':'Create Account'}</button>
-      </form>
-      <button className="link" onClick={()=>setMode(mode==='login'?'signup':'login')}>
-        {mode==='login'?'Create account':'Sign in'}
-      </button>
-    </div>
-  )
-}
-
-// --- Home ---
-function Home({ me, choose, openShorts, openChatRoom }) {
-  return (
-    <main className="homePage">
-      <p className="greeting">Hello, {me.display_name}!</p>
-      <button className="chatRoomHero" onClick={openChatRoom}>
-        <MessageCircle size={28} />
-        <span><b>Public Chat Room</b><small>Chat with everyone in the community</small></span>
-        ›
-      </button>
-      <button className="shortsHero" onClick={openShorts}>
-        <Play fill="currentColor" />
-        <span><b>Shorts</b><small>Watch & share 60s videos</small></span>
-        ›
-      </button>
-      {Object.entries(P).map(([k, x]) => {
-        const Icon = x[3]
-        return (
-          <button className="platformBtn" key={k} onClick={()=>choose(k)} style={{'--color':x[2]}}>
-            <Icon />
-            <span><b>{x[0]}</b><small>{x[1]}</small></span>
-            ›
-          </button>
-        )
-      })}
-    </main>
-  )
-}
-
-// --- ✅ CHAT ROOM — WITH TEXT INPUT FIXED ---
-function ChatRoom({ me, back }) {
-  const [messages, setMessages] = useState([])
-  const [newMessage, setNewMessage] = useState('')
-  const [sending, setSending] = useState(false)
-  const [uploadingImage, setUploadingImage] = useState(false)
-  const messagesEndRef = useRef(null)
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  // Load messages & subscribe
-  useEffect(() => {
-    loadMessages()
-    const sub = supabase.from('chat_room')
-      .select('*,profiles(display_name)')
-      .order('created_at', { ascending: true })
-      .limit(100)
-      .then(({ data }) => setMessages(data || []))
-
-    const channel = supabase.channel('public_chat')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_room' }, (payload) => {
-        setMessages(prev => [...prev, payload.new])
-      })
-      .subscribe()
-
-    return () => supabase.removeChannel(channel)
-  }, [])
-
-  async function loadMessages() {
-    const { data } = await supabase.from('chat_room')
-      .select('*,profiles(display_name)')
-      .order('created_at', { ascending: true })
-      .limit(100)
-    if (data) setMessages(data)
-  }
-
-  // --- Send TEXT Message ---
-  async function sendMessage(e) {
-    e?.preventDefault()
-    if (!newMessage.trim() || sending) return
-
-    setSending(true)
-    try {
-      const { error } = await supabase.from('chat_room').insert({
-        user_id: me.id,
-        content: newMessage.trim(),
-        type: 'text'
-      })
-      if (error) throw error
-      setNewMessage('') // Clear input after send
-    } catch (err) {
-      alert(`Failed to send: ${err.message}`)
-    } finally {
-      setSending(false)
-    }
-  }
-
-  // --- Send IMAGE ---
-  async function sendImage(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!file.type.startsWith('image/')) { alert('Only images allowed'); return }
-    if (file.size > 5 * 1024 * 1024) { alert('Image too large (max 5MB)'); return }
-
-    setUploadingImage(true)
-    try {
-      const ext = mediaExtension(file, file.type)
-      const path = `chat-media/${me.id}/${makeUploadId()}.${ext}`
-      
-      const { error: upErr } = await supabase.storage
-        .from('chat-media') // ✅ Create this bucket if missing!
-        .upload(path, file, { contentType: file.type })
-      if (upErr) throw upErr
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('chat-media')
-        .getPublicUrl(path)
-
-      await supabase.from('chat_room').insert({
-        user_id: me.id,
-        content: publicUrl,
-        type: 'image'
-      })
-    } catch (err) {
-      alert(`Image failed: ${err.message}`)
-    } finally {
-      setUploadingImage(false)
-    }
-  }
-
-  return (
-    <div className="chatRoomPage">
-      {/* Header */}
-      <div className="chatHeader">
-        <button onClick={back} className="backBtn"><ArrowLeft /></button>
-        <div>
-          <h2>Chat room</h2>
-          <p>Everyone in the room</p>
-        </div>
-        <button onClick={loadMessages} className="refreshBtn"><RefreshCw /></button>
-      </div>
-
-      {/* Notice */}
-      <div className="chatNotice">
-        <Shield size={18} />
-        <p>Be respectful. This is a public 18+ community room. You can report messages or block users from profiles.</p>
-      </div>
-
-      {/* Messages Area */}
-      <div className="messagesArea">
-        {messages.length === 0 && <p className="noMessages">No messages yet — be the first to say hi!</p>}
-        
-        {messages.map((msg, i) => {
-          const isMe = msg.user_id === me.id
-          return (
-            <div key={i} className={`messageBubble ${isMe ? 'myMessage' : 'otherMessage'}`}>
-              <div className="messageSender">{msg.profiles?.display_name || 'Someone'}</div>
-              
-              {/* Text Message */}
-              {msg.type === 'text' && (
-                <p className="messageText">{msg.content}</p>
-              )}
-              
-              {/* Image Message */}
-              {msg.type === 'image' && (
-                <img src={msg.content} alt="Shared" className="messageImage" />
-              )}
-              
-              {/* Video Message */}
-              {msg.type === 'video' && (
-                <video src={msg.content} controls className="messageVideo" />
-              )}
-              
-              <span className="messageTime">
-                {new Date(msg.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
-              </span>
-            </div>
-          )
-        })}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* ✅ FIXED: MESSAGE INPUT AREA — Text field NOW SHOWS ✅ */}
-      <form onSubmit={sendMessage} className="messageInputArea">
-        {/* Image Button */}
-        <label className="attachBtn" title="Send image">
-          <input type="file" accept="image/*" onChange={sendImage} disabled={uploadingImage} hidden />
-          <ImageIcon size={22} />
-        </label>
-
-        {/* ✅ TEXT INPUT — The missing part! */}
-        <input
-          type="text"
-          className="textInput"
-          placeholder="Type a message..."
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          disabled={sending}
-          autoComplete="off"
-        />
-
-        {/* Send Button */}
-        <button 
-          type="submit" 
-          className="sendBtn" 
-          disabled={sending || !newMessage.trim()}
-        >
-          <Send size={22} />
-        </button>
-      </form>
-    </div>
-  )
-}
-
-// --- Shorts ---
-function Shorts({ me, back }) {
-  const [videos, setVideos] = useState([])
-  const [idx, setIdx] = useState(0)
-
-  useEffect(() => {
-    supabase.from('short_videos')
-      .select('*,profiles(display_name,age)')
-      .eq('status', 'approved')
-      .neq('user_id', me.id)
-      .order('created_at', {ascending:false})
-      .limit(30)
-      .then(({data}) => setVideos(data||[]))
-  }, [me.id])
-
-  if (!videos.length) return <div className="page"><button onClick={back}><ArrowLeft /> Back</button><p>No Shorts yet</p></div>
-  const v = videos[idx]
-  return (
-    <div className="shortsPage">
-      <button onClick={back}><ArrowLeft /> Back</button>
-      <video src={v.video_url} controls autoPlay loop muted playsInline className="shortVideo" />
-      <p>{v.profiles?.display_name}, {v.profiles?.age}</p>
-      <div className="shortsNav">
-        <button disabled={idx===0} onClick={()=>setIdx(i=>i-1)}>‹ Prev</button>
-        <span>{idx+1}/{videos.length}</span>
-        <button disabled={idx===videos.length-1} onClick={()=>setIdx(i=>i+1)}>Next ›</button>
-      </div>
-    </div>
-  )
-}
-
-// --- Discover ---
-function Discover({ me, platform, people, like, back }) {
-  const p = people[0]
-  return (
-    <div className="discoverPage">
-      <button onClick={back}><ArrowLeft /> Back</button>
-      {p ? (
-        <div className="profileCard">
-          {p.photo ? <img src={p.photo} alt="" className="cardPhoto" /> : <div className="noPhoto"><UserRound /></div>}
-          <h2>{p.display_name}, {p.age}</h2>
-          <p>{p.location}</p>
-          <div className="cardActions">
-            <button onClick={back} className="passBtn"><X /></button>
-            <button onClick={()=>like(p)} className="likeBtn"><Heart fill="currentColor" /></button>
-          </div>
-        </div>
-      ) : <p>No more profiles</p>}
-    </div>
-  )
-}
-
-// --- Matches ---
-function Matches({ people, load, back }) {
-  return (
-    <div className="matchesPage">
-      <button onClick={back}><ArrowLeft /> Back</button>
-      <h2>Your Matches</h2>
-      {!people.length ? <p>No matches yet</p> : people.map(p => (
-        <div key={p.id} className="matchItem">
-          {p.photo ? <img src={p.photo} alt="" /> : <div className="matchAvatar">{p.display_name?.[0]}</div>}
-          <span>{p.display_name}, {p.age}</span>
-        </div>
-      ))}
-      <button onClick={load}>Refresh</button>
-    </div>
-  )
-}
-
-// --- Profile ---
-function Profile({ me, photoUrl, bioVideo, onPhotoUpdate, onVideoUpdate }) {
-  const [message, setMessage] = useState('')
-
-  async function uploadPhoto(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!file.type.startsWith('image/')) { setMessage('❌ Not an image'); return }
-    const ext = mediaExtension(file, file.type)
-    const path = `${me.id}/${makeUploadId()}.${ext}`
-    const { error: upErr } = await supabase.storage.from('profile-photos').upload(path, file, { contentType: file.type })
-    if (upErr) { setMessage(`❌ ${upErr.message}`); return }
-    const { data: { signedUrl } } = await supabase.storage.from('profile-photos').createSignedUrl(path, 31536000)
-    await supabase.from('profile_photos').insert({ user_id: me.id, storage_path: path, is_primary: true })
-    onPhotoUpdate(signedUrl)
-    setMessage('✅ Photo uploaded')
-  }
-
-  async function uploadBioVideo(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!file.type.startsWith('video/')) { setMessage('❌ Not a video'); return }
-    if (await getVideoDuration(file) > 60) { setMessage('❌ Video must be under 60s'); return }
-
-    // Delete old first
-    await supabase.from('short_videos').delete().match({ user_id: me.id, is_bio_video: true })
-
-    const ext = mediaExtension(file, file.type)
-    const path = `${me.id}/bio-${makeUploadId()}.${ext}`
-    const { error: upErr } = await supabase.storage.from('profile-videos').upload(path, file, { contentType: file.type })
-    if (upErr) { setMessage(`❌ ${upErr.message}`); return }
-
-    const { data: urlData } = await supabase.storage.from('profile-videos').createSignedUrl(path, 31536000)
-    const { data: newVideo } = await supabase.from('short_videos').insert({
-      user_id: me.id, video_url: urlData.signedUrl, storage_path: path, is_bio_video: true, status: 'approved'
-    }).select().single()
-
-    onVideoUpdate(newVideo)
-    setMessage('✅ Bio video updated')
-  }
-
-  return (
-    <div className="profilePage">
-      <div className="avatarCircle">
-        {photoUrl ? <img src={photoUrl} alt="" /> : <span>{me.display_name?.[0]}</span>}
-      </div>
-      <h2>{me.display_name}, {me.age}</h2>
-      <p>{me.location || 'Set your location'}</p>
-
-      {bioVideo && (
-        <div className="bioVideo">
-          <video src={bioVideo.video_url} controls autoPlay loop muted playsInline />
-        </div>
-      )}
-
-      <label>
-        <b>Profile Photo</b>
-        <input type="file" accept="image/*" onChange={uploadPhoto} />
-      </label>
-
-      <label>
-        <b>Bio Video (replaces old automatically)</b>
-        <input type="file" accept="video/*" onChange={uploadBioVideo} />
-      </label>
-
-      {message && <p>{message}</p>}
-    </div>
-  )
-}
-
-// --- Settings ---
-function Settings({ signOut }) {
-  return (
-    <div className="settingsPage">
-      <h2>Settings</h2>
-      <button onClick={signOut} className="signOutBtn">Sign Out</button>
-    </div>
-  )
-}
-
-const root = createRoot(document.getElementById('root'))
-root.render(<App />)
+            return <button type="button" className={sel?'sel':''} onClick={()=>setP({...p,seeking:sel?p.seeking.filter(y=>y!==x):[...p.seeking,x]})} key={x}>{sel?'✓ ':''}{
