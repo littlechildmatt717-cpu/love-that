@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
-  Heart, Users, UsersRound, Flame, MessageCircle, UserRound, Settings, ArrowLeft, Shield, Send, X,
+  Heart, Users, UsersRound, Flame, MessageCircle, UserRound, Settings as SettingsIcon, ArrowLeft, Shield, Send, X,
   Sparkles, Play, Image as ImageIcon, RefreshCw
 } from 'lucide-react'
 import { supabase } from './lib/supabase'
@@ -81,7 +81,6 @@ function App() {
   const [likeCount24h, setLikeCount24h] = useState(0)
   const [likesRemaining, setLikesRemaining] = useState(MAX_LIKES_PER_24H)
 
-  // Load like count on session ready
   useEffect(() => {
     if (session?.user) countLikesLast24h(session.user.id)
   }, [session?.user])
@@ -173,11 +172,9 @@ function App() {
     setMatches(await Promise.all((ps || []).map(async p => ({ ...p, photo: await getPrimaryPhotoUrl(p.id) }))))
   }
 
-  // --- Like Handler with Limit ---
   async function likePerson(person) {
     setError('')
     
-    // ✅ Check limit FIRST
     if (likesRemaining <= 0) {
       setError(`⚠️ You've used all ${MAX_LIKES_PER_24H} likes for today. Come back tomorrow!`)
       return
@@ -187,7 +184,6 @@ function App() {
       const res = await supabase.functions.invoke('like-user', { body: { to_user_id: person.id } })
       
       if (res.error) {
-        // Fallback: direct DB insert if function missing
         console.warn('Function error — using direct DB fallback')
         const { error: insertErr } = await supabase.from('likes').insert({
           from_user_id: session.user.id,
@@ -196,7 +192,6 @@ function App() {
         if (insertErr && !insertErr.message.includes('duplicate')) throw insertErr
       }
 
-      // Update counts
       setLikeCount24h(prev => prev + 1)
       setLikesRemaining(prev => prev - 1)
 
@@ -222,7 +217,7 @@ function App() {
     <div className="app">
       <header>
         <b>{APP_NAME}</b>
-        <button onClick={() => setPage('settings')}><Settings /></button>
+        <button onClick={() => setPage('settings')}><SettingsIcon /></button>
       </header>
       {error && <div className="error">{error}</div>}
 
@@ -240,7 +235,7 @@ function App() {
       {page === 'matches' && <Matches people={matches} load={loadMatches} back={() => setPage('home')} />}
       {page === 'profile' && <Profile me={profile} photoUrl={profilePhotoUrl} bioVideo={bioVideo} onPhotoUpdate={setProfilePhotoUrl} onVideoUpdate={setBioVideo} />}
       {page === 'chatroom' && <ChatRoom me={profile} back={() => setPage('home')} />}
-      {page === 'settings' && <Settings signOut={async () => { await supabase.auth.signOut(); setPage('home') }} />}
+      {page === 'settings' && <SettingsPage signOut={async () => { await supabase.auth.signOut(); setPage('home') }} />}
 
       <nav>
         <button onClick={() => setPage('home')}><Sparkles />Discover</button>
@@ -520,7 +515,6 @@ function Discover({ platform, people, like, likesRemaining, maxLikes, back }) {
       <button className="backBtn" onClick={back}><ArrowLeft /></button>
       <h2>{platformData[0]}</h2>
       
-      {/* ✅ Like Counter Display */}
       <div className="likeCounter" style={{textAlign:'center', padding:'8px 16px', background: isLimitReached ? '#ff3b3020' : '#34c75920', borderRadius:'20px', marginBottom:'12px'}}>
         <strong style={{color: isLimitReached ? '#ff3b30' : '#34c759'}}>
           {likesRemaining} / {maxLikes} likes remaining today
@@ -652,8 +646,8 @@ function Profile({ me, photoUrl, bioVideo, onPhotoUpdate, onVideoUpdate }) {
   )
 }
 
-// --- Settings ---
-function Settings({ signOut }) {
+// --- SettingsPage (renamed to avoid conflict) ---
+function SettingsPage({ signOut }) {
   return (
     <div className="settingsPage">
       <h2>Settings</h2>
