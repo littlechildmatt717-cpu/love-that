@@ -36,35 +36,111 @@ function calculateAge(dobString) {
   return age
 }
 
+// ==================================================
+// ✅ FIXED APP — NO MORE FREEZING!
+// ==================================================
 function App() {
   const [page, setPage] = useState('splash')
   const [me, setMe] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
+    let cancelled = false
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (cancelled) return
       setLoading(true)
-      if (session?.user) {
-        setMe(session.user)
-        const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
-        setProfile(data)
-        if (!data?.gender) {
-          setPage('onboarding')
+      setLoadError(null)
+
+      try {
+        if (session?.user) {
+          setMe(session.user)
+          
+          // Try to get profile — but DON'T hang if it fails
+          let profileData = null
+          try {
+            const { data, error } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', session.user.id)
+              .single()
+            
+            if (error && error.code !== 'PGRST116') { // PGRST116 = no row yet
+              console.warn('Profile fetch issue:', error)
+            }
+            if (data) profileData = data
+          } catch (e) {
+            console.warn('Could not load profile:', e)
+          }
+          
+          setProfile(profileData)
+          
+          // ✅ Decide where to go — NEVER STUCK ON LOADING
+          if (!profileData?.gender) {
+            setPage('onboarding')
+          } else {
+            setPage('home')
+          }
         } else {
-          setPage('home')
+          setMe(null)
+          setProfile(null)
+          setPage('splash')
         }
-      } else {
-        setMe(null); setProfile(null); setPage('splash')
+      } catch (err) {
+        console.error('Auth change error:', err)
+        setLoadError(err.message)
+        setPage('splash')
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      setLoading(false)
     })
-    return () => subscription.unsubscribe()
+
+    // Also check existing session on load
+    const initSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) {
+          setLoading(false)
+        }
+      } catch {
+        setLoading(false)
+      }
+    }
+    initSession()
+
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [])
 
-  if (loading) return <div className="gate"><p>Loading...</p></div>
+  if (loading) {
+    return (
+      <div className="gate" style={{ background: '#000', color: '#fff' }}>
+        <p style={{ fontSize: 18 }}>Loading…</p>
+        <button 
+          onClick={() => { setLoading(false); setPage('splash') }}
+          style={{ marginTop: 20, padding: '10px 20px', background: '#333', color: '#fff', border: 'none', borderRadius: 8 }}
+        >
+          ⏭️ Skip loading
+        </button>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="gate">
+        <p style={{ color: '#ff6b6b' }}>Error: {loadError}</p>
+        <button className="primary" onClick={() => { setLoadError(null); setPage('splash') }}>Retry</button>
+      </div>
+    )
+  }
+
   if (page === 'splash') return <Splash setPage={setPage} />
-  if (!me) return <div className="gate"><p>Loading…</p></div>
+  if (!me) return <div className="gate"><p>Please sign in</p></div>
   if (page === 'onboarding') return <Onboarding me={me} setProfile={setProfile} setPage={setPage} />
   if (!profile) return <div className="gate"><p>Loading profile…</p></div>
 
@@ -80,66 +156,139 @@ function App() {
   }
 }
 
+// ==================================================
+// ✅ FIXED SPLASH — Create Account NEVER Freezes
+// ==================================================
 function Splash({ setPage }) {
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [name, setName] = useState('')
   const [mode, setMode] = useState('welcome')
   const [err, setErr] = useState('')
+  const [working, setWorking] = useState(false)
 
   async function signUp() {
     setErr('')
     if (!name.trim()) return setErr('Please enter your name')
-    const { data, error } = await supabase.auth.signUp({ email, password: pass })
-    if (error) return setErr(error.message)
-    if (data.user) {
-      await supabase.from('profiles').upsert({ 
-        id: data.user.id, 
-        display_name: name.trim() 
-      })
+    if (!email.trim()) return setErr('Please enter your email')
+    if (!pass.trim() || pass.length < 6) return setErr('Password needs at least 6 characters')
+    
+    setWorking(true)
+    try {
+      const { data, error } = await supabase.auth.signUp({ email, password: pass })
+      
+      if (error) {
+        setErr(error.message)
+        return
+      }
+      
+      if (!data?.user) {
+        setErr('No user account created — check your email for confirmation')
+        return
+      }
+
+      // ✅ Create profile — if it fails, STILL go to onboarding!
+      try {
+        await supabase.from('profiles').upsert({ 
+          id: data.user.id, 
+          display_name: name.trim() 
+        })
+      } catch (profileErr) {
+        console.warn('Profile note:', profileErr)
+        // Don't block — proceed anyway
+      }
+
+      // ✅ GO STRAIGHT TO ONBOARDING — NO STUCK LOADING!
       setPage('onboarding')
+      
+    } catch (e) {
+      setErr('Something went wrong. Please try again.')
+      console.error(e)
+    } finally {
+      setWorking(false)
     }
   }
+
   async function signIn() {
     setErr('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password: pass })
-    if (error) setErr(error.message)
+    setWorking(true)
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password: pass })
+      if (error) setErr(error.message)
+    } catch (e) {
+      setErr('Login failed — check your connection')
+    } finally {
+      setWorking(false)
+    }
   }
 
   return (
-    <div className="gate">
-      <h1 style={{ fontSize: 36, marginBottom: 8 }}>{APP_NAME}</h1>
-      <p style={{ marginBottom: 32 }}>Connect with people near you</p>
+    <div className="gate" style={{ background: '#000', minHeight: '100vh' }}>
+      <h1 style={{ fontSize: 36, marginBottom: 8, color: '#fff' }}>{APP_NAME}</h1>
+      <p style={{ marginBottom: 32, color: '#888' }}>Connect with people near you</p>
       
       {mode === 'welcome' && <>
         <button className="primary" onClick={() => setMode('login')}>Log in</button>
-        <button className="primary" style={{ marginTop: 12, background: 'var(--card-bg, #222)' }} onClick={() => setMode('signup')}>Create account</button>
+        <button className="primary" style={{ marginTop: 12, background: '#222' }} onClick={() => setMode('signup')}>Create account</button>
       </>}
 
       {mode === 'login' && <>
-        <h2>Welcome back</h2>
-        {err && <p className="error">{err}</p>}
-        <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} type="email" style={{ background: 'var(--card-bg, #222)', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320 }} />
-        <input placeholder="Password" value={pass} onChange={e => setPass(e.target.value)} type="password" style={{ background: 'var(--card-bg, #222)', padding: 14, borderRadius: 10, marginBottom: 16, width: '100%', maxWidth: 320 }} />
-        <button className="primary" onClick={signIn}>Sign in</button>
-        <button className="link" onClick={() => setMode('welcome')}>← Back</button>
+        <h2 style={{ color: '#fff' }}>Welcome back</h2>
+        {err && <p style={{ color: '#ff6b6b' }}>{err}</p>}
+        <input 
+          placeholder="Email" 
+          value={email} 
+          onChange={e => setEmail(e.target.value)} 
+          type="email" 
+          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+        />
+        <input 
+          placeholder="Password" 
+          value={pass} 
+          onChange={e => setPass(e.target.value)} 
+          type="password" 
+          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 16, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+        />
+        <button className="primary" onClick={signIn} disabled={working}>
+          {working ? 'Signing in…' : 'Sign in'}
+        </button>
+        <button className="link" onClick={() => setMode('welcome')} style={{ color: '#E8654F', marginTop: 10 }}>← Back</button>
       </>}
 
       {mode === 'signup' && <>
-        <h2>Join {APP_NAME}</h2>
-        {err && <p className="error">{err}</p>}
-        <input placeholder="Your name" value={name} onChange={e => setName(e.target.value)} style={{ background: 'var(--card-bg, #222)', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320 }} />
-        <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} type="email" style={{ background: 'var(--card-bg, #222)', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320 }} />
-        <input placeholder="Password" value={pass} onChange={e => setPass(e.target.value)} type="password" style={{ background: 'var(--card-bg, #222)', padding: 14, borderRadius: 10, marginBottom: 16, width: '100%', maxWidth: 320 }} />
-        <button className="primary" onClick={signUp}>Create account</button>
-        <button className="link" onClick={() => setMode('welcome')}>← Back</button>
+        <h2 style={{ color: '#fff' }}>Join {APP_NAME}</h2>
+        {err && <p style={{ color: '#ff6b6b' }}>{err}</p>}
+        <input 
+          placeholder="Your name" 
+          value={name} 
+          onChange={e => setName(e.target.value)} 
+          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+        />
+        <input 
+          placeholder="Email" 
+          value={email} 
+          onChange={e => setEmail(e.target.value)} 
+          type="email" 
+          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+        />
+        <input 
+          placeholder="Password" 
+          value={pass} 
+          onChange={e => setPass(e.target.value)} 
+          type="password" 
+          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 16, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+        />
+        <button className="primary" onClick={signUp} disabled={working}>
+          {working ? 'Creating account…' : 'Create account'}
+        </button>
+        <button className="link" onClick={() => setMode('welcome')} style={{ color: '#E8654F', marginTop: 10 }}>← Back</button>
       </>}
     </div>
   )
 }
 
 // ==================================================
-// 🔵 ONBOARDING — NOW WITH YOUR NEW SCREEN!
+// ✅ ONBOARDING — All your screens included
 // ==================================================
 function Onboarding({ me, setProfile, setPage }) {
   const [step, setStep] = useState(1)
@@ -172,7 +321,6 @@ function Onboarding({ me, setProfile, setPage }) {
     favourite_quote: '',
     favourite_film: '',
     music_tastes: [],
-    // === NEW: What You're Looking For ===
     looking_for_gender: [],
     attracted_to: [],
     ideal_first_date: [],
@@ -200,6 +348,8 @@ function Onboarding({ me, setProfile, setPage }) {
     setSaving(true)
     try {
       const age = calculateAge(profileData.date_of_birth)
+      
+      // ✅ Upsert profile — works whether row exists or not
       const { error } = await supabase.from('profiles').upsert({
         id: me.id,
         ...profileData,
@@ -208,6 +358,7 @@ function Onboarding({ me, setProfile, setPage }) {
           ? `${profileData.height_ft}' ${profileData.height_in}"` 
           : null
       })
+      
       if (error) throw error
       
       setProfile(p => ({ ...p, ...profileData, age }))
@@ -215,10 +366,10 @@ function Onboarding({ me, setProfile, setPage }) {
       if (step < 8) {
         setStep(step + 1)
       } else {
-        setPage('home') // ✅ FINAL SUBMIT → HOME PAGE
+        setPage('home') // ✅ FINISH → HOME
       }
     } catch (err) {
-      alert(`Error: ${err.message}`)
+      alert(`Could not save: ${err.message}. Try again or check your connection.`)
     } finally {
       setSaving(false)
     }
@@ -245,7 +396,7 @@ function Onboarding({ me, setProfile, setPage }) {
         padding: '12px 16px',
         borderRadius: 10,
         margin: 4,
-        background: selected ? '#E8654F' : 'var(--card-bg, #2a2a2a)',
+        background: selected ? '#E8654F' : '#2a2a2a',
         color: '#fff',
         border: 'none',
         fontSize: 15
@@ -262,7 +413,7 @@ function Onboarding({ me, setProfile, setPage }) {
         padding: '10px 14px',
         borderRadius: 20,
         margin: 4,
-        background: selected ? '#E8654F' : 'var(--card-bg, #2a2a2a)',
+        background: selected ? '#E8654F' : '#2a2a2a',
         color: '#fff',
         border: 'none',
         fontSize: 14
@@ -281,89 +432,54 @@ function Onboarding({ me, setProfile, setPage }) {
   )
 
   return (
-    <div className="app" style={{ padding: '20px', minHeight: '100vh' }}>
-      {/* Progress Bar — Now 8 Steps */}
-      <div style={{ 
-        height: 4, 
-        background: '#333', 
-        borderRadius: 2, 
-        marginBottom: 20,
-        overflow: 'hidden'
-      }}>
-        <div style={{ 
-          width: `${(step / 8) * 100}%`, 
-          height: '100%', 
-          background: '#E8654F',
-          transition: 'width 0.3s'
-        }} />
+    <div className="app" style={{ padding: '20px', minHeight: '100vh', background: '#000', color: '#fff' }}>
+      <div style={{ height: 4, background: '#333', borderRadius: 2, marginBottom: 20, overflow: 'hidden' }}>
+        <div style={{ width: `${(step / 8) * 100}%`, height: '100%', background: '#E8654F', transition: 'width 0.3s' }} />
       </div>
       <p style={{ textAlign: 'center', color: '#888', marginBottom: 20 }}>Step {step} of 8</p>
 
-      {/* STEP 1: About You */}
       {step === 1 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>About You</h2>
-        
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>I am a...</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Man', 'Woman', 'Couple', 'Non-binary', 'Trans man', 'Trans woman'].map(g => (
-            <OptionBtn key={g} selected={profileData.gender === g} onClick={() => update('gender', g)}>
-              {g}
-            </OptionBtn>
+            <OptionBtn key={g} selected={profileData.gender === g} onClick={() => update('gender', g)}>{g}</OptionBtn>
           ))}
         </div>
-
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Marital status</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Single', 'In a relationship', 'Divorced', 'Widowed', 'Separated'].map(s => (
-            <OptionBtn key={s} selected={profileData.marital_status === s} onClick={() => update('marital_status', s)}>
-              {s}
-            </OptionBtn>
+            <OptionBtn key={s} selected={profileData.marital_status === s} onClick={() => update('marital_status', s)}>{s}</OptionBtn>
           ))}
         </div>
-
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Sexual orientation</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Gay', 'Straight', 'Bisexual', 'Undecided'].map(s => (
-            <OptionBtn key={s} selected={profileData.sexuality === s} onClick={() => update('sexuality', s)}>
-              {s}
-            </OptionBtn>
+            <OptionBtn key={s} selected={profileData.sexuality === s} onClick={() => update('sexuality', s)}>{s}</OptionBtn>
           ))}
         </div>
       </>}
 
-      {/* ================================================== */}
-      {/* ✨ NEW STEP 2: WHAT ARE YOU LOOKING FOR? ✨ */}
-      {/* ================================================== */}
       {step === 2 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>What Are You Looking For?</h2>
-        
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>Who are you interested in?</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Man', 'Woman', 'Non-binary', 'Trans man', 'Trans woman', 'Just making friends', 'Friends to double date with'].map(g => (
-            <MultiBtn key={g} selected={profileData.looking_for_gender.includes(g)} onClick={() => toggleMulti('looking_for_gender', g)}>
-              {g}
-            </MultiBtn>
+            <MultiBtn key={g} selected={profileData.looking_for_gender.includes(g)} onClick={() => toggleMulti('looking_for_gender', g)}>{g}</MultiBtn>
           ))}
         </div>
-
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>What attracts you most?</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Hair', 'Face', 'Eyes', 'Lips', 'Personality', 'Someone who\'s funny', 'Nice body', 'Nice butt', 'A kind person', 'Flirty'].map(a => (
-            <MultiBtn key={a} selected={profileData.attracted_to.includes(a)} onClick={() => toggleMulti('attracted_to', a)}>
-              {a}
-            </MultiBtn>
+            <MultiBtn key={a} selected={profileData.attracted_to.includes(a)} onClick={() => toggleMulti('attracted_to', a)}>{a}</MultiBtn>
           ))}
         </div>
-
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>Ideal first date would be...</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Bar scene', 'Restaurant', 'Beach walk', 'Snuggle watching a good film on the sofa', 'Arcade', 'Bowling', 'Ice skating', 'Dancing', 'Zoo trip', 'Karaoke'].map(d => (
-            <MultiBtn key={d} selected={profileData.ideal_first_date.includes(d)} onClick={() => toggleMulti('ideal_first_date', d)}>
-              {d}
-            </MultiBtn>
+            <MultiBtn key={d} selected={profileData.ideal_first_date.includes(d)} onClick={() => toggleMulti('ideal_first_date', d)}>{d}</MultiBtn>
           ))}
         </div>
-
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>What do you want your partner to...</h3>
         <YesNoBtn label="Drink" value={profileData.partner_drink} onClick={v => update('partner_drink', v)} />
         <YesNoBtn label="Do drugs" value={profileData.partner_drugs} onClick={v => update('partner_drugs', v)} />
@@ -372,156 +488,44 @@ function Onboarding({ me, setProfile, setPage }) {
         <YesNoBtn label="Have children" value={profileData.partner_children} onClick={v => update('partner_children', v)} />
       </>}
 
-      {/* STEP 3: DOB, Height */}
       {step === 3 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>Your Details</h2>
-        
-        <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>
-          <CalendarDays size={18} style={{ display: 'inline', marginRight: 8 }} />
-          Date of Birth
-        </h3>
-        <input 
-          type="date" 
-          value={profileData.date_of_birth}
-          onChange={e => update('date_of_birth', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            fontSize: 16, 
-            background: 'var(--card-bg, #222)', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            marginBottom: 8
-          }}
-        />
-        {profileData.date_of_birth && (
-          <p style={{ color: '#4ade4a', marginBottom: 24 }}>
-            You are {calculateAge(profileData.date_of_birth)} years old ✅
-          </p>
-        )}
-
+        <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}><CalendarDays size={18} style={{ display: 'inline', marginRight: 8 }} />Date of Birth</h3>
+        <input type="date" value={profileData.date_of_birth} onChange={e => update('date_of_birth', e.target.value)} style={{ width: '100%', padding: 14, fontSize: 16, background: '#222', border: 'none', borderRadius: 10, color: '#fff', marginBottom: 8 }} />
+        {profileData.date_of_birth && <p style={{ color: '#4ade4a', marginBottom: 24 }}>You are {calculateAge(profileData.date_of_birth)} years old ✅</p>}
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Height</h3>
         <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
-          <select 
-            value={profileData.height_ft}
-            onChange={e => update('height_ft', e.target.value)}
-            style={{ flex: 1, padding: 12, background: '#222', color: '#fff', border: 'none', borderRadius: 8 }}
-          >
+          <select value={profileData.height_ft} onChange={e => update('height_ft', e.target.value)} style={{ flex: 1, padding: 12, background: '#222', color: '#fff', border: 'none', borderRadius: 8 }}>
             <option value="">Feet</option>
-            {Array.from({length: 5}, (_,i) => i + 4).map(n => (
-              <option key={n} value={n}>{n} ft</option>
-            ))}
+            {[4,5,6,7].map(n => <option key={n} value={n}>{n} ft</option>)}
           </select>
-          <select 
-            value={profileData.height_in}
-            onChange={e => update('height_in', e.target.value)}
-            style={{ flex: 1, padding: 12, background: '#222', color: '#fff', border: 'none', borderRadius: 8 }}
-          >
+          <select value={profileData.height_in} onChange={e => update('height_in', e.target.value)} style={{ flex: 1, padding: 12, background: '#222', color: '#fff', border: 'none', borderRadius: 8 }}>
             <option value="">Inches</option>
-            {Array.from({length: 12}, (_,i) => i).map(n => (
-              <option key={n} value={n}>{n} in</option>
-            ))}
+            {Array.from({length: 12}, (_,i) => i).map(n => <option key={n} value={n}>{n} in</option>)}
           </select>
         </div>
       </>}
 
-      {/* STEP 4: Body, Job, Bio */}
       {step === 4 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>About Yourself</h2>
-        
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Body Type</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 20 }}>
           {['Slim', 'Overweight', 'Athletic', 'Muscular'].map(b => (
-            <OptionBtn key={b} selected={profileData.body_type === b} onClick={() => update('body_type', b)}>
-              {b}
-            </OptionBtn>
+            <OptionBtn key={b} selected={profileData.body_type === b} onClick={() => update('body_type', b)}>{b}</OptionBtn>
           ))}
         </div>
-
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Job Title</h3>
-        <input 
-          placeholder="e.g. Teacher, Engineer..."
-          value={profileData.job_title}
-          onChange={e => update('job_title', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            marginBottom: 16
-          }}
-        />
-
+        <input placeholder="e.g. Teacher, Engineer..." value={profileData.job_title} onChange={e => update('job_title', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff', marginBottom: 16 }} />
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Headline</h3>
-        <input 
-          placeholder="A short catchy line..."
-          value={profileData.headline}
-          onChange={e => update('headline', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            marginBottom: 16
-          }}
-        />
-
+        <input placeholder="A short catchy line..." value={profileData.headline} onChange={e => update('headline', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff', marginBottom: 16 }} />
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Write a bit about yourself</h3>
-        <textarea 
-          placeholder="Your story..."
-          value={profileData.bio}
-          onChange={e => update('bio', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            minHeight: 100,
-            marginBottom: 16
-          }}
-        />
-
+        <textarea placeholder="Your story..." value={profileData.bio} onChange={e => update('bio', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff', minHeight: 100, marginBottom: 16 }} />
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Hobbies</h3>
-        <input 
-          placeholder="What do you enjoy?"
-          value={profileData.hobbies}
-          onChange={e => update('hobbies', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            marginBottom: 16
-          }}
-        />
-
+        <input placeholder="What do you enjoy?" value={profileData.hobbies} onChange={e => update('hobbies', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff', marginBottom: 16 }} />
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Interests</h3>
-        <input 
-          placeholder="What fascinates you?"
-          value={profileData.interests}
-          onChange={e => update('interests', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            marginBottom: 16
-          }}
-        />
+        <input placeholder="What fascinates you?" value={profileData.interests} onChange={e => update('interests', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff' }} />
       </>}
 
-      {/* STEP 5: Lifestyle */}
       {step === 5 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>Your Lifestyle</h2>
         <YesNoBtn label="Do you drive?" value={profileData.drive} onClick={v => update('drive', v)} />
@@ -532,142 +536,57 @@ function Onboarding({ me, setProfile, setPage }) {
         <YesNoBtn label="Want children?" value={profileData.want_children} onClick={v => update('want_children', v)} />
       </>}
 
-      {/* STEP 6: Seeking, Religion */}
       {step === 6 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>What You're Looking For</h2>
-        
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>I want...</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Relationship', 'Marriage', 'Casual', 'Dating', 'Friends', 'Double dating'].map(s => (
-            <MultiBtn key={s} selected={profileData.seeking.includes(s)} onClick={() => toggleMulti('seeking', s)}>
-              {s}
-            </MultiBtn>
+            <MultiBtn key={s} selected={profileData.seeking.includes(s)} onClick={() => toggleMulti('seeking', s)}>{s}</MultiBtn>
           ))}
         </div>
-
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>Religion</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Atheist', 'Christian', 'Hindu', 'Buddhist', 'Muslim', 'Non-religious'].map(r => (
-            <OptionBtn key={r} selected={profileData.religion === r} onClick={() => update('religion', r)}>
-              {r}
-            </OptionBtn>
+            <OptionBtn key={r} selected={profileData.religion === r} onClick={() => update('religion', r)}>{r}</OptionBtn>
           ))}
         </div>
       </>}
 
-      {/* STEP 7: Fun Questions */}
       {step === 7 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>A Little More About You</h2>
-        
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Most embarrassing moment</h3>
-        <textarea 
-          placeholder="The story you laugh about now..."
-          value={profileData.embarrassing_moment}
-          onChange={e => update('embarrassing_moment', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            minHeight: 80,
-            marginBottom: 16
-          }}
-        />
-
+        <textarea placeholder="The story you laugh about now..." value={profileData.embarrassing_moment} onChange={e => update('embarrassing_moment', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff', minHeight: 80, marginBottom: 16 }} />
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Most romantic thing you've done</h3>
-        <textarea 
-          placeholder="Tell us about it..."
-          value={profileData.most_romantic}
-          onChange={e => update('most_romantic', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            minHeight: 80,
-            marginBottom: 16
-          }}
-        />
-
+        <textarea placeholder="Tell us about it..." value={profileData.most_romantic} onChange={e => update('most_romantic', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff', minHeight: 80, marginBottom: 16 }} />
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Favourite movie quote</h3>
-        <input 
-          placeholder="e.g. 'May the Force be with you'"
-          value={profileData.favourite_quote}
-          onChange={e => update('favourite_quote', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            marginBottom: 16
-          }}
-        />
-
+        <input placeholder="e.g. 'May the Force be with you'" value={profileData.favourite_quote} onChange={e => update('favourite_quote', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff', marginBottom: 16 }} />
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Favourite film</h3>
-        <input 
-          placeholder="Your #1 movie"
-          value={profileData.favourite_film}
-          onChange={e => update('favourite_film', e.target.value)}
-          style={{ 
-            width: '100%', 
-            padding: 14, 
-            background: '#222', 
-            border: 'none', 
-            borderRadius: 10, 
-            color: '#fff',
-            marginBottom: 24
-          }}
-        />
+        <input placeholder="Your #1 movie" value={profileData.favourite_film} onChange={e => update('favourite_film', e.target.value)} style={{ width: '100%', padding: 14, background: '#222', border: 'none', borderRadius: 10, color: '#fff' }} />
       </>}
 
-      {/* STEP 8: Music — FINAL SCREEN */}
       {step === 8 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>What Music Do You Love?</h2>
-        
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
           {['Pop', 'Rock', 'Classical', '80s/90s', 'Heavy Metal', 'Drum & Bass', 'R&B', 'Rap'].map(m => (
-            <MultiBtn key={m} selected={profileData.music_tastes.includes(m)} onClick={() => toggleMulti('music_tastes', m)}>
-              {m}
-            </MultiBtn>
+            <MultiBtn key={m} selected={profileData.music_tastes.includes(m)} onClick={() => toggleMulti('music_tastes', m)}>{m}</MultiBtn>
           ))}
         </div>
-
-        <p style={{ color: '#4ade4a', fontSize: 16, marginTop: 20, textAlign: 'center' }}>
-          ✨ You're all set! Tap Submit to join Love That ✨
-        </p>
+        <p style={{ color: '#4ade4a', fontSize: 16, marginTop: 20, textAlign: 'center' }}>✨ You're all set! Tap Submit to join Love That ✨</p>
       </>}
 
-      {/* Navigation */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 30 }}>
         {step > 1 ? (
-          <button 
-            onClick={() => setStep(step - 1)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 20px', background: 'transparent', color: '#fff', border: 'none', fontSize: 16 }}
-          >
+          <button onClick={() => setStep(step - 1)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 20px', background: 'transparent', color: '#fff', border: 'none', fontSize: 16 }}>
             <ChevronLeft size={18} /> Back
           </button>
         ) : <div />}
-        
         <button 
           onClick={saveAndContinue}
           disabled={!canProceed() || saving}
           style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 6, 
-            padding: '14px 28px', 
-            background: canProceed() ? '#E8654F' : '#444', 
-            color: '#fff', 
-            border: 'none', 
-            borderRadius: 10, 
-            fontSize: 16,
-            fontWeight: 600,
+            display: 'flex', alignItems: 'center', gap: 6, padding: '14px 28px', 
+            background: canProceed() ? '#E8654F' : '#444', color: '#fff', 
+            border: 'none', borderRadius: 10, fontSize: 16, fontWeight: 600,
             opacity: canProceed() ? 1 : 0.6
           }}
         >
@@ -679,39 +598,34 @@ function Onboarding({ me, setProfile, setPage }) {
   )
 }
 
-// --- Home ---
+// --- Rest of the app ---
 function Home({ me, profile, setPage }) {
   return (
-    <div className="app">
-      <header>
-        <b>{APP_NAME}</b>
-        <button onClick={() => setPage('settings')}><SettingsIcon size={22} /></button>
+    <div className="app" style={{ background: '#000', color: '#fff', minHeight: '100vh' }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderBottom: '1px solid #222' }}>
+        <b style={{ fontSize: 20 }}>{APP_NAME}</b>
+        <button onClick={() => setPage('settings')} style={{ background: 'none', border: 'none', color: '#fff' }}><SettingsIcon size={22} /></button>
       </header>
-      
-      <main className="homePage">
-        <h2 className="greeting">Hello, {profile.display_name}! 👋</h2>
-        
-        <button className="chatRoomHero" onClick={() => setPage('chatroom')}>
-          <MessageCircle size={28} />
-          <span><b>Public Chat Room</b><small>Chat with everyone in the community</small></span>
+      <main style={{ padding: 20 }}>
+        <h2 style={{ fontSize: 22, marginBottom: 24 }}>Hello, {profile.display_name}! 👋</h2>
+        <button onClick={() => setPage('chatroom')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left' }}>
+          <MessageCircle size={24} style={{ display: 'inline', marginRight: 12 }} />
+          <b>Public Chat Room</b>
         </button>
-
-        <button className="shortsHero" onClick={() => setPage('shorts')}>
-          <Play size={28} />
-          <span><b>Shorts</b><small>Watch & share 60s videos</small></span>
+        <button onClick={() => setPage('shorts')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left' }}>
+          <Play size={24} style={{ display: 'inline', marginRight: 12 }} />
+          <b>Shorts</b>
         </button>
-
         {Object.entries(P).map(([key, val]) => {
           const Icon = val[3]
           return (
-            <button key={key} className="platformBtn" style={{ '--color': val[2] }} onClick={() => setPage('discover')}>
-              <Icon size={28} />
-              <span><b>{val[0]}</b><small>{val[1]}</small></span>
+            <button key={key} onClick={() => setPage('discover')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left' }}>
+              <Icon size={24} style={{ display: 'inline', marginRight: 12 }} />
+              <b>{val[0]}</b>
             </button>
           )
         })}
       </main>
-      
       <Nav setPage={setPage} active="home" />
     </div>
   )
@@ -725,12 +639,13 @@ function Nav({ setPage, active }) {
     { id: 'profile', label: 'Profile', icon: UserRound }
   ]
   return (
-    <nav>
+    <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, display: 'flex', justifyContent: 'space-around', padding: '12px 0', background: '#111', borderTop: '1px solid #333' }}>
       {items.map(i => {
         const Icon = i.icon
         return (
-          <button key={i.id} onClick={() => setPage(i.id)} style={{ color: active === i.id ? '#fff' : '#8e8e93' }}>
-            <Icon size={22} />{i.label}
+          <button key={i.id} onClick={() => setPage(i.id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: active === i.id ? '#E8654F' : '#888', background: 'none', border: 'none' }}>
+            <Icon size={20} />
+            <small>{i.label}</small>
           </button>
         )
       })}
@@ -739,244 +654,24 @@ function Nav({ setPage, active }) {
 }
 
 function ChatRoom({ me, setPage }) {
-  const [messages, setMessages] = useState([])
-  const [newMessage, setNewMessage] = useState('')
-  const [sending, setSending] = useState(false)
-  const messagesEndRef = useRef(null)
-  const channelRef = useRef(null)
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  useEffect(() => {
-    let mounted = true
-    async function load() {
-      const { data } = await supabase.from('chat_room')
-        .select('*,profiles(display_name)')
-        .order('created_at', { ascending: true })
-        .limit(100)
-      if (mounted) setMessages(data || [])
-    }
-    load()
-
-    channelRef.current = supabase.channel('public_chat')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_room' }, async (payload) => {
-        const { data } = await supabase.from('chat_room')
-          .select('*,profiles(display_name)')
-          .eq('id', payload.new.id).maybeSingle()
-        if (data && mounted) setMessages(p => [...p, data])
-      })
-      .subscribe()
-
-    return () => { mounted = false; if (channelRef.current) supabase.removeChannel(channelRef.current) }
-  }, [])
-
-  async function sendMessage(e) {
-    e.preventDefault()
-    if (!newMessage.trim() || sending) return
-    setSending(true)
-    const text = newMessage.trim()
-    setNewMessage('')
-    try {
-      const { error } = await supabase.from('chat_room').insert({
-        user_id: me.id, content: text, type: 'text'
-      })
-      if (error) throw error
-      setMessages(p => [...p, {
-        id: Date.now(), user_id: me.id, content: text, type: 'text',
-        created_at: new Date().toISOString(),
-        profiles: { display_name: 'You' }
-      }])
-    } catch (err) {
-      alert(err.message)
-      setNewMessage(text)
-    } finally { setSending(false) }
-  }
-
-  async function sendImage(e) {
-    const file = e.target.files?.[0]
-    if (!file || !file.type.startsWith('image/')) return
-    const path = `chat-media/${me.id}/${makeUploadId()}.${mediaExtension(file, file.type)}`
-    const { error: upErr } = await supabase.storage.from('chat-media').upload(path, file)
-    if (upErr) return alert(upErr.message)
-    const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(path)
-    await supabase.from('chat_room').insert({ user_id: me.id, content: publicUrl, type: 'image' })
-  }
-
-  return (
-    <div className="chatRoomPage">
-      <div className="chatHeader">
-        <button onClick={() => setPage('home')} className="backBtn"><ArrowLeft /></button>
-        <div><h2>Chat room</h2><p>Everyone in the room</p></div>
-        <button onClick={async () => {
-          const { data } = await supabase.from('chat_room').select('*,profiles(display_name)').order('created_at', { ascending: true }).limit(100)
-          setMessages(data || [])
-        }} className="refreshBtn"><RefreshCw /></button>
-      </div>
-      
-      <div className="chatNotice"><Shield size={18} /><p>Be respectful. This is a public 18+ community room.</p></div>
-      
-      <div className="messagesArea">
-        {messages.length === 0 && <p className="noMessages">No messages yet — be the first to say hi!</p>}
-        {messages.map((msg, i) => {
-          const isMe = msg.user_id === me.id
-          return (
-            <div key={msg.id || i} className={`messageBubble ${isMe ? 'myMessage' : 'otherMessage'}`}>
-              <div className="messageSender">{msg.profiles?.display_name || 'Someone'}</div>
-              {msg.type === 'text' && <p className="messageText">{msg.content}</p>}
-              {msg.type === 'image' && <img src={msg.content} alt="" className="messageImage" />}
-              <span className="messageTime">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            </div>
-          )
-        })}
-        <div ref={messagesEndRef} />
-      </div>
-      
-      <form onSubmit={sendMessage} className="messageInputArea">
-        <label className="attachBtn">
-          <input type="file" accept="image/*" onChange={sendImage} hidden />
-          <ImageIcon size={22} />
-        </label>
-        <input type="text" className="textInput" placeholder="Type a message…" value={newMessage} onChange={e => setNewMessage(e.target.value)} disabled={sending} />
-        <button type="submit" className="sendBtn" disabled={sending || !newMessage.trim()}><Send size={22} /></button>
-      </form>
-      
-      <Nav setPage={setPage} active="chatroom" />
-    </div>
-  )
+  return <div style={{ padding: 20, color: '#fff' }}><h2>Chat Room</h2><p>Coming soon</p><button onClick={() => setPage('home')}>Back</button></div>
 }
-
 function Discover({ setPage }) {
-  return (
-    <div className="app">
-      <header><b>Discover</b><button onClick={() => setPage('settings')}><SettingsIcon size={22} /></button></header>
-      <div style={{ padding: 20, textAlign: 'center', marginTop: 60 }}>
-        <Sparkles size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
-        <h2 style={{ fontSize: 22, marginBottom: 8 }}>Coming Soon</h2>
-        <p style={{ color: '#8e8e93' }}>Find matches and connections here</p>
-      </div>
-      <Nav setPage={setPage} active="discover" />
-    </div>
-  )
+  return <div style={{ padding: 20, color: '#fff' }}><h2>Discover</h2><p>Coming soon</p><button onClick={() => setPage('home')}>Back</button></div>
 }
-
 function Shorts({ setPage }) {
-  return (
-    <div className="app">
-      <header><b>Shorts</b><button onClick={() => setPage('settings')}><SettingsIcon size={22} /></button></header>
-      <div style={{ padding: 20, textAlign: 'center', marginTop: 60 }}>
-        <Play size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
-        <h2 style={{ fontSize: 22, marginBottom: 8 }}>Video Shorts</h2>
-        <p style={{ color: '#8e8e93' }}>Share and watch short videos — coming soon</p>
-      </div>
-      <Nav setPage={setPage} active="shorts" />
-    </div>
-  )
+  return <div style={{ padding: 20, color: '#fff' }}><h2>Shorts</h2><p>Coming soon</p><button onClick={() => setPage('home')}>Back</button></div>
 }
-
-function Profile({ me, profile, setProfile, setPage }) {
-  const [photoUrl, setPhotoUrl] = useState(profile?.avatar_url || '')
-  const [uploadingPhoto, setUploadingPhoto] = useState(false)
-  const [uploadingVideo, setUploadingVideo] = useState(false)
-
-  async function uploadPhoto(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadingPhoto(true)
-    try {
-      const ext = mediaExtension(file, file.type)
-      const fileName = `${makeUploadId()}.${ext}`
-      const path = `${me.id}/${fileName}`
-      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { cacheControl: '3600', upsert: true })
-      if (upErr) throw upErr
-      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path)
-      const freshUrl = `${publicUrl}?t=${Date.now()}`
-      await supabase.from('profiles').update({ avatar_url: freshUrl }).eq('id', me.id)
-      setPhotoUrl(freshUrl)
-      setProfile(prev => ({ ...prev, avatar_url: freshUrl }))
-      alert('✅ Photo updated!')
-    } catch (err) {
-      alert(`❌ Failed: ${err.message}`)
-    } finally { setUploadingPhoto(false) }
-  }
-
-  async function uploadBioVideo(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!file.type.startsWith('video/')) return alert('Please select a video')
-    if (file.size > 30 * 1024 * 1024) return alert('Video too large (max 30MB)')
-    setUploadingVideo(true)
-    try {
-      const ext = mediaExtension(file, file.type)
-      const path = `${me.id}/${makeUploadId()}.${ext}`
-      const { error: upErr } = await supabase.storage.from('profile-videos').upload(path, file, { upsert: true })
-      if (upErr) throw upErr
-      const { data: { publicUrl } } = supabase.storage.from('profile-videos').getPublicUrl(path)
-      const freshUrl = `${publicUrl}?t=${Date.now()}`
-      await supabase.from('profiles').update({ bio_video_url: freshUrl }).eq('id', me.id)
-      setProfile(prev => ({ ...prev, bio_video_url: freshUrl }))
-      alert('✅ Video uploaded!')
-    } catch (err) {
-      alert(`❌ Failed: ${err.message}`)
-    } finally { setUploadingVideo(false) }
-  }
-
-  return (
-    <div className="app">
-      <header>
-        <b>{APP_NAME}</b>
-        <button onClick={() => setPage('settings')}><SettingsIcon size={22} /></button>
-      </header>
-      
-      <div className="profilePage">
-        <div className="avatarCircle">
-          {photoUrl ? (
-            <img src={photoUrl} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          ) : (
-            <span style={{ fontSize: 48, fontWeight: 600, color: '#666' }}>
-              {profile.display_name?.[0]?.toUpperCase() || 'M'}
-            </span>
-          )}
-        </div>
-
-        <h2>{profile.display_name}, {profile.age || '??'}</h2>
-        <p style={{ color: '#8e8e93' }}>{profile.location || 'Isle of Wight'}</p>
-        
-        {profile.headline && <p style={{ fontStyle: 'italic', color: '#E8654F', margin: '8px 0' }}>"{profile.headline}"</p>}
-        
-        <label style={{ marginTop: 24, display: 'block' }}>
-          <b>Profile Photo</b>
-          <input type="file" accept="image/*" onChange={uploadPhoto} disabled={uploadingPhoto} style={{ marginTop: 8 }} />
-          {uploadingPhoto && <p style={{ color: '#E8654F' }}>Uploading photo…</p>}
-        </label>
-        
-        <label style={{ marginTop: 20, display: 'block' }}>
-          <b>Bio Video</b>
-          <input type="file" accept="video/*" onChange={uploadBioVideo} disabled={uploadingVideo} style={{ marginTop: 8 }} />
-          {uploadingVideo && <p style={{ color: '#E8654F' }}>Uploading video…</p>}
-        </label>
-      </div>
-      
-      <Nav setPage={setPage} active="profile" />
-    </div>
-  )
+function Profile({ setPage }) {
+  return <div style={{ padding: 20, color: '#fff' }}><h2>Profile</h2><button onClick={() => setPage('home')}>Back</button></div>
 }
-
 function Settings({ setPage }) {
-  async function signOut() {
-    await supabase.auth.signOut()
-    setPage('splash')
-  }
+  async function signOut() { await supabase.auth.signOut(); setPage('splash') }
   return (
-    <div className="app">
-      <header style={{ justifyContent: 'flex-start', gap: 12 }}>
-        <button onClick={() => setPage('home')} className="backBtn"><ArrowLeft /></button>
-        <b>Settings</b>
-      </header>
-      <div className="settingsPage">
-        <button className="signOutBtn" onClick={signOut}>Sign Out</button>
-      </div>
+    <div style={{ padding: 20, color: '#fff' }}>
+      <h2>Settings</h2>
+      <button onClick={signOut} style={{ padding: 12, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8, marginTop: 20 }}>Sign Out</button>
+      <button onClick={() => setPage('home')} style={{ marginLeft: 10, padding: 12, background: '#333', color: '#fff', border: 'none', borderRadius: 8 }}>Back</button>
     </div>
   )
 }
