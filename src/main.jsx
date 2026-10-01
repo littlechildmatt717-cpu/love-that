@@ -65,10 +65,8 @@ function App() {
   if (!me) return <Splash setPage={setPage} />
   if (page === 'onboarding' || !profile?.gender) return <Onboarding me={me} setProfile={setProfile} setPage={setPage} />
   
-  // === MAIN APP ===
   return (
     <div style={{minHeight:'100vh', background:'#000', color:'#fff', paddingBottom:80}}>
-      {/* Header */}
       <header style={{
         display:'flex', justifyContent:'space-between', alignItems:'center',
         padding:'16px 20px', borderBottom:'1px solid #222'
@@ -82,7 +80,6 @@ function App() {
         </button>
       </header>
 
-      {/* Content */}
       <main style={{padding:20}}>
         {page === 'home' && <Home profile={profile} setPage={setPage} />}
         {page === 'discover' && <Discover />}
@@ -91,7 +88,6 @@ function App() {
         {page === 'profile' && <MyProfile profile={profile} setProfile={setProfile} />}
       </main>
 
-      {/* Bottom Navigation */}
       <nav style={{
         position:'fixed', bottom:0, left:0, right:0,
         background:'#111', borderTop:'1px solid #222',
@@ -167,7 +163,6 @@ function Home({ profile, setPage }) {
   )
 }
 
-// === PLACEHOLDER SCREENS ===
 function Discover() {
   return (
     <div style={{textAlign:'center', paddingTop:40}}>
@@ -198,7 +193,7 @@ function Messages() {
   )
 }
 
-function MyProfile({ profile, setProfile }) {
+function MyProfile({ profile }) {
   const age = calculateAge(profile?.date_of_birth)
   return (
     <div>
@@ -220,7 +215,6 @@ function MyProfile({ profile, setProfile }) {
 
       <div style={{display:'flex', flexDirection:'column', gap:10}}>
         {[
-          {label:'Email', value:profile?.email || '…'},
           {label:'Status', value:profile?.marital_status || 'Not set'},
           {label:'Height', value:profile?.height || 'Not set'},
         ].map(i => (
@@ -237,7 +231,7 @@ function MyProfile({ profile, setProfile }) {
   )
 }
 
-// === SPLASH / LOGIN ===
+// === SPLASH SCREEN — YOUR LOGO HERE ===
 function Splash({ setPage }) {
   const [mode, setMode] = useState('welcome')
   const [name, setName] = useState('')
@@ -275,16 +269,29 @@ function Splash({ setPage }) {
   }
 
   return (
-    <div style={centerStyle}>
-      <h1 style={{fontSize:42, margin:0, color:'#E8654F'}}>{APP_NAME}</h1>
-      <p style={{color:'#888', margin:'10px 0 40px'}}>Connect with people near you</p>
+    <div style={{...centerStyle, background:'#D62890'}}>
+      {/* 🔥 YOUR CUSTOM LOGO 🔥 */}
+      <img 
+        src="/logo-love-that.png" 
+        alt="love that"
+        style={{
+          width: 220,
+          height: 220,
+          borderRadius: 24,
+          marginBottom: 10,
+          objectFit: 'contain'
+        }}
+      />
+      <h1 style={{fontSize:42, margin:0, color:'#fff', textShadow:'0 2px 4px rgba(0,0,0,0.2)'}}>{APP_NAME}</h1>
+      <p style={{color:'#fff', opacity:0.8, margin:'10px 0 40px'}}>Connect with people near you</p>
+      
       {mode === 'welcome' && <>
         <button onClick={() => setMode('login')} style={primaryBtn}>Log in</button>
         <button onClick={() => setMode('signup')} style={secondaryBtn}>Create account</button>
       </>}
       {mode === 'signup' && <>
-        <h2>Join {APP_NAME}</h2>
-        {err && <p style={{color:'#ff6b6b'}}>{err}</p>}
+        <h2 style={{color:'#fff'}}>Join {APP_NAME}</h2>
+        {err && <p style={{color:'#ffb3b3'}}>{err}</p>}
         <input placeholder="Your name" value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
         <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} type="email" style={inputStyle} />
         <input placeholder="Password" value={pass} onChange={e => setPass(e.target.value)} type="password" style={inputStyle} />
@@ -294,8 +301,8 @@ function Splash({ setPage }) {
         <button onClick={() => setMode('welcome')} style={linkBtn}>← Back</button>
       </>}
       {mode === 'login' && <>
-        <h2>Welcome back</h2>
-        {err && <p style={{color:'#ff6b6b'}}>{err}</p>}
+        <h2 style={{color:'#fff'}}>Welcome back</h2>
+        {err && <p style={{color:'#ffb3b3'}}>{err}</p>}
         <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} type="email" style={inputStyle} />
         <input placeholder="Password" value={pass} onChange={e => setPass(e.target.value)} type="password" style={inputStyle} />
         <button onClick={signIn} disabled={working} style={primaryBtn}>
@@ -456,26 +463,26 @@ function Onboarding({ me, setProfile, setPage }) {
 
 // === STYLES ===
 const centerStyle = {
-  background: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column',
+  minHeight: '100vh', display: 'flex', flexDirection: 'column',
   alignItems: 'center', justifyContent: 'center', color: '#fff', padding: 20
 }
 
 const inputStyle = {
   width: 280, padding: 16, marginBottom: 12,
-  background: '#222', border: 'none', borderRadius: 10, color: '#fff', fontSize: 16
+  background: 'rgba(0,0,0,0.25)', border: 'none', borderRadius: 10, color: '#fff', fontSize: 16
 }
 
 const primaryBtn = {
-  width: 280, padding: 16, background: '#E8654F', color: '#fff',
-  border: 'none', borderRadius: 12, fontSize: 18, marginTop: 10
+  width: 280, padding: 16, background: '#fff', color: '#D62890',
+  border: 'none', borderRadius: 12, fontSize: 18, fontWeight:'bold', marginTop: 10
 }
 
 const secondaryBtn = {
-  width: 280, padding: 16, background: '#2a2a2a', color: '#fff',
+  width: 280, padding: 16, background: 'rgba(255,255,255,0.2)', color: '#fff',
   border: 'none', borderRadius: 12, fontSize: 18, marginTop: 12
 }
 
-const linkBtn = { color: '#E8654F', background: 'none', border: 'none', marginTop: 20, fontSize: 16 }
+const linkBtn = { color: '#fff', background: 'none', border: 'none', marginTop: 20, fontSize: 16, textDecoration:'underline' }
 const backBtn = { color: '#fff', background: 'none', border: 'none', display: 'flex', alignItems: 'center', fontSize: 16 }
 const selectStyle = { flex: 1, padding: 16, background: '#1a1a1a', color: '#fff', border: '2px solid #333', borderRadius: 10, fontSize: 16 }
 
