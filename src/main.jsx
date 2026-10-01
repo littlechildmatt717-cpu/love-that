@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Heart, Users, UsersRound, Flame, MessageCircle, UserRound, Settings, ArrowLeft, Shield, Send, X,
-  Sparkles, Play, Video, Image as ImageIcon, RefreshCw
+  Sparkles, Play, Image as ImageIcon, RefreshCw
 } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import './styles.css'
@@ -18,9 +18,12 @@ const identities = ['Woman','Man','Non-binary','Trans woman','Trans man']
 const seeking = ['Men','Women','Men & women','Double dates','Non-binary people','Everyone']
 const goals = ['A relationship','Casual dating','New friends','Flirty chat','Not sure yet']
 
-const identityDb = {Woman:'woman',Man:'man','Non-binary:'non_binary','Trans woman':'trans_woman','Trans man':'trans_man'}
+const identityDb = {Woman:'woman',Man:'man','Non-binary':'non_binary','Trans woman':'trans_woman','Trans man':'trans_man'}
 const goalDb = {'A relationship':'relationship','Casual dating':'casual_dating','New friends':'new_friends','Flirty chat':'flirty_chat','Not sure yet':'not_sure'}
 const seekingDb = {'Men':'men','Women':'women','Men & women':'men_women','Double dates':'double_dates','Non-binary people':'non_binary','Everyone':'everyone'}
+
+// --- Like Limit Config ---
+const MAX_LIKES_PER_24H = 20
 
 // --- Helpers ---
 async function getPrimaryPhotoUrl(userId) {
@@ -75,6 +78,29 @@ function App() {
   const [error, setError] = useState('')
   const [profilePhotoUrl, setProfilePhotoUrl] = useState(null)
   const [bioVideo, setBioVideo] = useState(null)
+  const [likeCount24h, setLikeCount24h] = useState(0)
+  const [likesRemaining, setLikesRemaining] = useState(MAX_LIKES_PER_24H)
+
+  // Load like count on session ready
+  useEffect(() => {
+    if (session?.user) countLikesLast24h(session.user.id)
+  }, [session?.user])
+
+  async function countLikesLast24h(userId) {
+    try {
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const { count, error } = await supabase
+        .from('likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('from_user_id', userId)
+        .gte('created_at', oneDayAgo)
+      
+      if (!error) {
+        setLikeCount24h(count || 0)
+        setLikesRemaining(MAX_LIKES_PER_24H - (count || 0))
+      }
+    } catch (e) { console.error('Counting likes:', e) }
+  }
 
   useEffect(() => {
     let alive = true
@@ -147,6 +173,45 @@ function App() {
     setMatches(await Promise.all((ps || []).map(async p => ({ ...p, photo: await getPrimaryPhotoUrl(p.id) }))))
   }
 
+  // --- Like Handler with Limit ---
+  async function likePerson(person) {
+    setError('')
+    
+    // ✅ Check limit FIRST
+    if (likesRemaining <= 0) {
+      setError(`⚠️ You've used all ${MAX_LIKES_PER_24H} likes for today. Come back tomorrow!`)
+      return
+    }
+
+    try {
+      const res = await supabase.functions.invoke('like-user', { body: { to_user_id: person.id } })
+      
+      if (res.error) {
+        // Fallback: direct DB insert if function missing
+        console.warn('Function error — using direct DB fallback')
+        const { error: insertErr } = await supabase.from('likes').insert({
+          from_user_id: session.user.id,
+          to_user_id: person.id
+        })
+        if (insertErr && !insertErr.message.includes('duplicate')) throw insertErr
+      }
+
+      // Update counts
+      setLikeCount24h(prev => prev + 1)
+      setLikesRemaining(prev => prev - 1)
+
+      if (res.data?.match) {
+        alert(`🎉 It's a match with ${person.display_name}!`)
+        await loadMatches()
+      }
+
+      setDiscover(v => v.filter(x => x.id !== person.id))
+    } catch (err) {
+      setError(`Could not like: ${err.message}`)
+      console.error('Like error:', err)
+    }
+  }
+
   if (loading) return <div className="gate"><h1>Loading {APP_NAME}…</h1></div>
   if (!gate) return <Gate go={() => { localStorage.setItem('love_that_gate', '1'); setGate(true) }} />
   if (!session || !profile) return <Auth mode={authMode} setMode={setAuthMode} error={error} setError={setError} onReady={async s => {
@@ -163,21 +228,15 @@ function App() {
 
       {page === 'home' && <Home me={profile} choose={(p) => { setPlatform(p); setPage('discover'); loadDiscover(p) }} openShorts={() => setPage('shorts')} openChatRoom={() => setPage('chatroom')} />}
       {page === 'shorts' && <Shorts me={profile} back={() => setPage('home')} />}
-      {page === 'discover' && <Discover me={profile} platform={platform} people={discover} like={async (p) => {
-        setError('')
-        try {
-          const res = await supabase.functions.invoke('like-user', { body: { to_user_id: p.id } })
-          if (res.error) throw new Error(res.error.message || 'Function error — check like-user Edge Function')
-          if (res.data?.match) {
-            alert(`🎉 It's a match with ${p.display_name}!`)
-            await loadMatches()
-          }
-          setDiscover(v => v.filter(x => x.id !== p.id))
-        } catch (err) {
-          setError(`Could not like: ${err.message}`)
-          console.error('Like error:', err)
-        }
-      }} back={() => setPage('home')} refresh={loadDiscover} />}
+      {page === 'discover' && <Discover 
+        me={profile} 
+        platform={platform} 
+        people={discover} 
+        like={likePerson} 
+        likesRemaining={likesRemaining}
+        maxLikes={MAX_LIKES_PER_24H}
+        back={() => setPage('home')} 
+      />}
       {page === 'matches' && <Matches people={matches} load={loadMatches} back={() => setPage('home')} />}
       {page === 'profile' && <Profile me={profile} photoUrl={profilePhotoUrl} bioVideo={bioVideo} onPhotoUpdate={setProfilePhotoUrl} onVideoUpdate={setBioVideo} />}
       {page === 'chatroom' && <ChatRoom me={profile} back={() => setPage('home')} />}
@@ -206,7 +265,8 @@ function Gate({ go }) {
 
 // --- Auth ---
 function Auth({ mode, setMode, error, setError, onReady }) {
-  const [email, setEmail] = useState(''), [password, setPassword] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [p, setP] = useState({ name: '', dob: '', identity: '', location: '', goal: '', seeking: ['Everyone'] })
   const [busy, setBusy] = useState(false)
 
@@ -252,11 +312,355 @@ function Auth({ mode, setMode, error, setError, onReady }) {
         <label>Email<input type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
         <label>Password<input type="password" minLength={8} required value={password} onChange={e => setPassword(e.target.value)} /></label>
         {mode === 'signup' && <>
-          <label>Name<input required value={p.name} onChange={e => setP({...p, name:e.target.value})} /></label>
-          <label>Date of birth<input type="date" required value={p.dob} onChange={e => setP({...p, dob:e.target.value})} /></label>
+          <label>Name<input required value={p.name} onChange={e => setP({...p, name: e.target.value})} /></label>
+          <label>Date of birth<input type="date" required value={p.dob} onChange={e => setP({...p, dob: e.target.value})} /></label>
           <div className="choice"><b>I identify as:</b>{identities.map(x => (
-            <button type="button" className={p.identity===x?'sel':''} onClick={()=>setP({...p,identity:x})} key={x}>{x}</button>
+            <button type="button" className={p.identity === x ? 'sel' : ''} onClick={() => setP({...p, identity: x})} key={x}>{x}</button>
           ))}</div>
           <div className="choice"><b>Looking for:</b>{seeking.map(x => {
             const sel = p.seeking.includes(x)
-            return <button type="button" className={sel?'sel':''} onClick={()=>setP({...p,seeking:sel?p.seeking.filter(y=>y!==x):[...p.seeking,x]})} key={x}>{sel?'✓ ':''}{
+            return <button type="button" className={sel ? 'sel' : ''} onClick={() => setP({...p, seeking: sel ? p.seeking.filter(y => y !== x) : [...p.seeking, x]})} key={x}>{sel ? '✓ ' : ''}{x}</button>
+          })}</div>
+          <div className="choice"><b>My goal:</b>{goals.map(x => (
+            <button type="button" className={p.goal === x ? 'sel' : ''} onClick={() => setP({...p, goal: x})} key={x}>{x}</button>
+          ))}</div>
+        </>}
+        {error && <p className="error">{error}</p>}
+        <button className="primary" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}</button>
+      </form>
+      <button className="link" onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}>
+        {mode === 'login' ? 'Create account' : 'Sign in'}
+      </button>
+    </div>
+  )
+}
+
+// --- Home ---
+function Home({ me, choose, openShorts, openChatRoom }) {
+  return (
+    <main className="homePage">
+      <p className="greeting">Hello, {me.display_name}!</p>
+      <button className="chatRoomHero" onClick={openChatRoom}>
+        <MessageCircle size={28} />
+        <span><b>Public Chat Room</b><small>Chat with everyone in the community</small></span>
+        ›
+      </button>
+      <button className="shortsHero" onClick={openShorts}>
+        <Play fill="currentColor" />
+        <span><b>Shorts</b><small>Watch & share 60s videos</small></span>
+        ›
+      </button>
+      {Object.entries(P).map(([k, x]) => {
+        const Icon = x[3]
+        return (
+          <button className="platformBtn" key={k} onClick={() => choose(k)} style={{'--color': x[2]}}>
+            <Icon />
+            <span><b>{x[0]}</b><small>{x[1]}</small></span>
+            ›
+          </button>
+        )
+      })}
+    </main>
+  )
+}
+
+// --- Chat Room ---
+function ChatRoom({ me, back }) {
+  const [messages, setMessages] = useState([])
+  const [newMessage, setNewMessage] = useState('')
+  const [sending, setSending] = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const messagesEndRef = useRef(null)
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  useEffect(() => {
+    loadMessages()
+    const channel = supabase.channel('public_chat')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_room' }, (payload) => {
+        setMessages(prev => [...prev, payload.new])
+      })
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [])
+
+  async function loadMessages() {
+    const { data } = await supabase.from('chat_room')
+      .select('*,profiles(display_name)')
+      .order('created_at', { ascending: true })
+      .limit(100)
+    if (data) setMessages(data)
+  }
+
+  async function sendMessage(e) {
+    e?.preventDefault()
+    if (!newMessage.trim() || sending) return
+    setSending(true)
+    try {
+      await supabase.from('chat_room').insert({
+        user_id: me.id,
+        content: newMessage.trim(),
+        type: 'text'
+      })
+      setNewMessage('')
+    } catch (err) {
+      alert(`Failed to send: ${err.message}`)
+    } finally { setSending(false) }
+  }
+
+  async function sendImage(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) { alert('Only images allowed'); return }
+    if (file.size > 5 * 1024 * 1024) { alert('Image too large (max 5MB)'); return }
+    setUploadingImage(true)
+    try {
+      const ext = mediaExtension(file, file.type)
+      const path = `chat-media/${me.id}/${makeUploadId()}.${ext}`
+      const { error: upErr } = await supabase.storage.from('chat-media').upload(path, file, { contentType: file.type })
+      if (upErr) throw upErr
+      const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(path)
+      await supabase.from('chat_room').insert({ user_id: me.id, content: publicUrl, type: 'image' })
+    } catch (err) { alert(`Image failed: ${err.message}`) }
+    finally { setUploadingImage(false) }
+  }
+
+  return (
+    <div className="chatRoomPage">
+      <div className="chatHeader">
+        <button onClick={back} className="backBtn"><ArrowLeft /></button>
+        <div>
+          <h2>Chat room</h2>
+          <p>Everyone in the room</p>
+        </div>
+        <button onClick={loadMessages} className="refreshBtn"><RefreshCw /></button>
+      </div>
+      <div className="chatNotice">
+        <Shield size={18} />
+        <p>Be respectful. This is a public 18+ community room.</p>
+      </div>
+      <div className="messagesArea">
+        {messages.length === 0 && <p className="noMessages">No messages yet — be the first to say hi!</p>}
+        {messages.map((msg, i) => {
+          const isMe = msg.user_id === me.id
+          return (
+            <div key={i} className={`messageBubble ${isMe ? 'myMessage' : 'otherMessage'}`}>
+              <div className="messageSender">{msg.profiles?.display_name || 'Someone'}</div>
+              {msg.type === 'text' && <p className="messageText">{msg.content}</p>}
+              {msg.type === 'image' && <img src={msg.content} alt="Shared" className="messageImage" />}
+              <span className="messageTime">{new Date(msg.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+            </div>
+          )
+        })}
+        <div ref={messagesEndRef} />
+      </div>
+      <form onSubmit={sendMessage} className="messageInputArea">
+        <label className="attachBtn" title="Send image">
+          <input type="file" accept="image/*" onChange={sendImage} disabled={uploadingImage} hidden />
+          <ImageIcon size={22} />
+        </label>
+        <input
+          type="text"
+          className="textInput"
+          placeholder="Type a message…"
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          disabled={sending}
+          autoComplete="off"
+        />
+        <button type="submit" className="sendBtn" disabled={sending || !newMessage.trim()}>
+          <Send size={22} />
+        </button>
+      </form>
+    </div>
+  )
+}
+
+// --- Shorts ---
+function Shorts({ me, back }) {
+  const [videos, setVideos] = useState([])
+  const [idx, setIdx] = useState(0)
+
+  useEffect(() => {
+    supabase.from('short_videos')
+      .select('*,profiles(display_name,age)')
+      .eq('status', 'approved')
+      .neq('user_id', me.id)
+      .order('created_at', {ascending:false})
+      .limit(30)
+      .then(({data}) => setVideos(data||[]))
+  }, [me.id])
+
+  if (!videos.length) return <div className="page"><button onClick={back}><ArrowLeft /> Back</button><p>No Shorts yet</p></div>
+  const v = videos[idx]
+  return (
+    <div className="shortsPage">
+      <button onClick={back}><ArrowLeft /> Back</button>
+      <video src={v.video_url} controls autoPlay loop muted playsInline className="shortVideo" />
+      <p>{v.profiles?.display_name}, {v.profiles?.age}</p>
+      <div className="shortsNav">
+        <button disabled={idx===0} onClick={()=>setIdx(i=>i-1)}>‹ Prev</button>
+        <span>{idx+1}/{videos.length}</span>
+        <button disabled={idx===videos.length-1} onClick={()=>setIdx(i=>i+1)}>Next ›</button>
+      </div>
+    </div>
+  )
+}
+
+// --- Discover WITH Like Limit ---
+function Discover({ platform, people, like, likesRemaining, maxLikes, back }) {
+  const p = people[0]
+  const platformData = P[platform]
+  const isLimitReached = likesRemaining <= 0
+
+  return (
+    <div className="discoverPage">
+      <button className="backBtn" onClick={back}><ArrowLeft /></button>
+      <h2>{platformData[0]}</h2>
+      
+      {/* ✅ Like Counter Display */}
+      <div className="likeCounter" style={{textAlign:'center', padding:'8px 16px', background: isLimitReached ? '#ff3b3020' : '#34c75920', borderRadius:'20px', marginBottom:'12px'}}>
+        <strong style={{color: isLimitReached ? '#ff3b30' : '#34c759'}}>
+          {likesRemaining} / {maxLikes} likes remaining today
+        </strong>
+      </div>
+
+      {p ? (
+        <div className="profileCard">
+          {p.photo ? (
+            <img src={p.photo} alt={p.display_name} className="cardPhoto" />
+          ) : (
+            <div className="noPhoto"><UserRound size={48} /></div>
+          )}
+          <h2>{p.display_name}, {p.age}</h2>
+          {p.location && <p className="location">{p.location}</p>}
+          <div className="cardActions">
+            <button className="passBtn" onClick={back} aria-label="Pass"><X size={28} /></button>
+            <button 
+              className="likeBtn" 
+              onClick={() => like(p)} 
+              aria-label="Like"
+              disabled={isLimitReached}
+              style={{opacity: isLimitReached ? 0.5 : 1, cursor: isLimitReached ? 'not-allowed' : 'pointer'}}
+            >
+              <Heart size={32} fill="currentColor" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="emptyState">
+          <Heart size={48} />
+          <h3>No more profiles right now</h3>
+          <p>Check back later for new people!</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- Matches ---
+function Matches({ people, load, back }) {
+  return (
+    <div className="matchesPage">
+      <button onClick={back}><ArrowLeft /> Back</button>
+      <h2>Your Matches</h2>
+      {!people.length ? (
+        <p>No matches yet — keep liking people!</p>
+      ) : people.map(person => (
+        <div key={person.id} className="matchItem">
+          {person.photo ? (
+            <img src={person.photo} alt={person.display_name} className="matchAvatar" />
+          ) : (
+            <div className="matchAvatar">{person.display_name?.[0]}</div>
+          )}
+          <span>{person.display_name}, {person.age}</span>
+        </div>
+      ))}
+      <button onClick={load}>Refresh</button>
+    </div>
+  )
+}
+
+// --- Profile ---
+function Profile({ me, photoUrl, bioVideo, onPhotoUpdate, onVideoUpdate }) {
+  const [message, setMessage] = useState('')
+
+  async function uploadPhoto(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) { setMessage('❌ Not an image'); return }
+    const ext = mediaExtension(file, file.type)
+    const path = `${me.id}/${makeUploadId()}.${ext}`
+    const { error: upErr } = await supabase.storage.from('profile-photos').upload(path, file, { contentType: file.type })
+    if (upErr) { setMessage(`❌ ${upErr.message}`); return }
+    const { data: { publicUrl } } = supabase.storage.from('profile-photos').getPublicUrl(path)
+    await supabase.from('profile_photos').insert({ user_id: me.id, storage_path: path, is_primary: true })
+    onPhotoUpdate(publicUrl)
+    setMessage('✅ Photo uploaded')
+  }
+
+  async function uploadBioVideo(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('video/')) { setMessage('❌ Not a video'); return }
+    if (await getVideoDuration(file) > 60) { setMessage('❌ Video must be under 60 seconds'); return }
+
+    await supabase.from('short_videos').delete().match({ user_id: me.id, is_bio_video: true })
+
+    const ext = mediaExtension(file, file.type)
+    const path = `${me.id}/bio-${makeUploadId()}.${ext}`
+    const { error: upErr } = await supabase.storage.from('profile-videos').upload(path, file, { contentType: file.type })
+    if (upErr) { setMessage(`❌ ${upErr.message}`); return }
+
+    const { data: urlData } = await supabase.storage.from('profile-videos').createSignedUrl(path, 31536000)
+    const { data: newVideo } = await supabase.from('short_videos').insert({
+      user_id: me.id, video_url: urlData.signedUrl, storage_path: path, is_bio_video: true, status: 'approved'
+    }).select().single()
+
+    onVideoUpdate(newVideo)
+    setMessage('✅ Bio video updated')
+  }
+
+  return (
+    <div className="profilePage">
+      <div className="avatarCircle">
+        {photoUrl ? <img src={photoUrl} alt={me.display_name} /> : <span>{me.display_name?.[0]}</span>}
+      </div>
+      <h2>{me.display_name}, {me.age}</h2>
+      <p>{me.location || 'Set your location'}</p>
+
+      {bioVideo && (
+        <div className="bioVideo">
+          <video src={bioVideo.video_url} controls autoPlay loop muted playsInline />
+        </div>
+      )}
+
+      <label>
+        <b>Profile Photo</b>
+        <input type="file" accept="image/*" onChange={uploadPhoto} />
+      </label>
+
+      <label>
+        <b>Bio Video (replaces old automatically)</b>
+        <input type="file" accept="video/*" onChange={uploadBioVideo} />
+      </label>
+
+      {message && <p>{message}</p>}
+    </div>
+  )
+}
+
+// --- Settings ---
+function Settings({ signOut }) {
+  return (
+    <div className="settingsPage">
+      <h2>Settings</h2>
+      <button onClick={signOut} className="signOutBtn">Sign Out</button>
+    </div>
+  )
+}
+
+const root = createRoot(document.getElementById('root'))
+root.render(<App />)
