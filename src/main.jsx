@@ -26,7 +26,6 @@ function mediaExtension(file, type) {
   return 'bin'
 }
 
-// --- Calculate Age from DOB ---
 function calculateAge(dobString) {
   if (!dobString) return null
   const dob = new Date(dobString)
@@ -37,7 +36,6 @@ function calculateAge(dobString) {
   return age
 }
 
-// --- App ---
 function App() {
   const [page, setPage] = useState('splash')
   const [me, setMe] = useState(null)
@@ -51,7 +49,6 @@ function App() {
         setMe(session.user)
         const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
         setProfile(data)
-        // Check if profile is complete — if not, start onboarding
         if (!data?.gender) {
           setPage('onboarding')
         } else {
@@ -83,7 +80,6 @@ function App() {
   }
 }
 
-// --- Splash / Auth ---
 function Splash({ setPage }) {
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
@@ -101,7 +97,7 @@ function Splash({ setPage }) {
         id: data.user.id, 
         display_name: name.trim() 
       })
-      setPage('onboarding') // ← Goes straight to onboarding, no freeze!
+      setPage('onboarding')
     }
   }
   async function signIn() {
@@ -143,7 +139,7 @@ function Splash({ setPage }) {
 }
 
 // ==================================================
-// 🔵 COMPLETE ONBOARDING FLOW — All your fields!
+// 🔵 ONBOARDING — NOW WITH YOUR NEW SCREEN!
 // ==================================================
 function Onboarding({ me, setProfile, setPage }) {
   const [step, setStep] = useState(1)
@@ -175,7 +171,16 @@ function Onboarding({ me, setProfile, setPage }) {
     most_romantic: '',
     favourite_quote: '',
     favourite_film: '',
-    music_tastes: []
+    music_tastes: [],
+    // === NEW: What You're Looking For ===
+    looking_for_gender: [],
+    attracted_to: [],
+    ideal_first_date: [],
+    partner_drink: null,
+    partner_drugs: null,
+    partner_drive: null,
+    partner_smoke: null,
+    partner_children: null
   })
 
   const update = (field, value) => {
@@ -205,13 +210,12 @@ function Onboarding({ me, setProfile, setPage }) {
       })
       if (error) throw error
       
-      // Update local state
       setProfile(p => ({ ...p, ...profileData, age }))
       
-      if (step < 7) {
+      if (step < 8) {
         setStep(step + 1)
       } else {
-        setPage('home') // ✅ Done! Go to Home
+        setPage('home') // ✅ FINAL SUBMIT → HOME PAGE
       }
     } catch (err) {
       alert(`Error: ${err.message}`)
@@ -223,17 +227,17 @@ function Onboarding({ me, setProfile, setPage }) {
   const canProceed = () => {
     switch (step) {
       case 1: return profileData.gender && profileData.marital_status && profileData.sexuality
-      case 2: return profileData.date_of_birth
-      case 3: return profileData.body_type && profileData.job_title
-      case 4: return profileData.headline && profileData.bio
-      case 5: return profileData.drive !== null && profileData.drink !== null && profileData.smoke !== null
-      case 6: return profileData.seeking.length > 0 && profileData.religion
-      case 7: return profileData.favourite_film && profileData.music_tastes.length > 0
+      case 2: return profileData.looking_for_gender.length > 0 && profileData.attracted_to.length > 0 && profileData.ideal_first_date.length > 0 && profileData.partner_drink !== null
+      case 3: return profileData.date_of_birth
+      case 4: return profileData.body_type && profileData.job_title
+      case 5: return profileData.headline && profileData.bio
+      case 6: return profileData.drive !== null && profileData.drink !== null && profileData.smoke !== null
+      case 7: return profileData.seeking.length > 0 && profileData.religion
+      case 8: return profileData.favourite_film && profileData.music_tastes.length > 0
       default: return true
     }
   }
 
-  // Shared option button component
   const OptionBtn = ({ selected, onClick, children }) => (
     <button 
       onClick={onClick}
@@ -269,8 +273,8 @@ function Onboarding({ me, setProfile, setPage }) {
   )
 
   const YesNoBtn = ({ value, onClick, label }) => (
-    <div style={{ display: 'flex', gap: 8, margin: '8px 0' }}>
-      <span style={{ width: 120, color: '#ccc' }}>{label}</span>
+    <div style={{ display: 'flex', gap: 8, margin: '10px 0', alignItems: 'center' }}>
+      <span style={{ width: 180, color: '#ccc', fontSize: 15 }}>{label}</span>
       <OptionBtn selected={value === true} onClick={() => onClick(true)}>Yes</OptionBtn>
       <OptionBtn selected={value === false} onClick={() => onClick(false)}>No</OptionBtn>
     </div>
@@ -278,7 +282,7 @@ function Onboarding({ me, setProfile, setPage }) {
 
   return (
     <div className="app" style={{ padding: '20px', minHeight: '100vh' }}>
-      {/* Progress Bar */}
+      {/* Progress Bar — Now 8 Steps */}
       <div style={{ 
         height: 4, 
         background: '#333', 
@@ -287,15 +291,15 @@ function Onboarding({ me, setProfile, setPage }) {
         overflow: 'hidden'
       }}>
         <div style={{ 
-          width: `${(step / 7) * 100}%`, 
+          width: `${(step / 8) * 100}%`, 
           height: '100%', 
           background: '#E8654F',
           transition: 'width 0.3s'
         }} />
       </div>
-      <p style={{ textAlign: 'center', color: '#888', marginBottom: 20 }}>Step {step} of 7</p>
+      <p style={{ textAlign: 'center', color: '#888', marginBottom: 20 }}>Step {step} of 8</p>
 
-      {/* STEP 1: Gender, Marital, Sexuality */}
+      {/* STEP 1: About You */}
       {step === 1 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>About You</h2>
         
@@ -327,8 +331,49 @@ function Onboarding({ me, setProfile, setPage }) {
         </div>
       </>}
 
-      {/* STEP 2: DOB, Height */}
+      {/* ================================================== */}
+      {/* ✨ NEW STEP 2: WHAT ARE YOU LOOKING FOR? ✨ */}
+      {/* ================================================== */}
       {step === 2 && <>
+        <h2 style={{ fontSize: 24, marginBottom: 24 }}>What Are You Looking For?</h2>
+        
+        <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>Who are you interested in?</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
+          {['Man', 'Woman', 'Non-binary', 'Trans man', 'Trans woman', 'Just making friends', 'Friends to double date with'].map(g => (
+            <MultiBtn key={g} selected={profileData.looking_for_gender.includes(g)} onClick={() => toggleMulti('looking_for_gender', g)}>
+              {g}
+            </MultiBtn>
+          ))}
+        </div>
+
+        <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>What attracts you most?</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
+          {['Hair', 'Face', 'Eyes', 'Lips', 'Personality', 'Someone who\'s funny', 'Nice body', 'Nice butt', 'A kind person', 'Flirty'].map(a => (
+            <MultiBtn key={a} selected={profileData.attracted_to.includes(a)} onClick={() => toggleMulti('attracted_to', a)}>
+              {a}
+            </MultiBtn>
+          ))}
+        </div>
+
+        <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>Ideal first date would be...</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
+          {['Bar scene', 'Restaurant', 'Beach walk', 'Snuggle watching a good film on the sofa', 'Arcade', 'Bowling', 'Ice skating', 'Dancing', 'Zoo trip', 'Karaoke'].map(d => (
+            <MultiBtn key={d} selected={profileData.ideal_first_date.includes(d)} onClick={() => toggleMulti('ideal_first_date', d)}>
+              {d}
+            </MultiBtn>
+          ))}
+        </div>
+
+        <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>What do you want your partner to...</h3>
+        <YesNoBtn label="Drink" value={profileData.partner_drink} onClick={v => update('partner_drink', v)} />
+        <YesNoBtn label="Do drugs" value={profileData.partner_drugs} onClick={v => update('partner_drugs', v)} />
+        <YesNoBtn label="Drive" value={profileData.partner_drive} onClick={v => update('partner_drive', v)} />
+        <YesNoBtn label="Smoke" value={profileData.partner_smoke} onClick={v => update('partner_smoke', v)} />
+        <YesNoBtn label="Have children" value={profileData.partner_children} onClick={v => update('partner_children', v)} />
+      </>}
+
+      {/* STEP 3: DOB, Height */}
+      {step === 3 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>Your Details</h2>
         
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>
@@ -381,8 +426,8 @@ function Onboarding({ me, setProfile, setPage }) {
         </div>
       </>}
 
-      {/* STEP 3: Body, Job, Headline, Bio */}
-      {step === 3 && <>
+      {/* STEP 4: Body, Job, Bio */}
+      {step === 4 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>About Yourself</h2>
         
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Body Type</h3>
@@ -476,10 +521,9 @@ function Onboarding({ me, setProfile, setPage }) {
         />
       </>}
 
-      {/* STEP 4: Lifestyle */}
-      {step === 4 && <>
-        <h2 style={{ fontSize: 24, marginBottom: 24 }}>Lifestyle</h2>
-        
+      {/* STEP 5: Lifestyle */}
+      {step === 5 && <>
+        <h2 style={{ fontSize: 24, marginBottom: 24 }}>Your Lifestyle</h2>
         <YesNoBtn label="Do you drive?" value={profileData.drive} onClick={v => update('drive', v)} />
         <YesNoBtn label="Do you drink?" value={profileData.drink} onClick={v => update('drink', v)} />
         <YesNoBtn label="Do you smoke?" value={profileData.smoke} onClick={v => update('smoke', v)} />
@@ -488,8 +532,8 @@ function Onboarding({ me, setProfile, setPage }) {
         <YesNoBtn label="Want children?" value={profileData.want_children} onClick={v => update('want_children', v)} />
       </>}
 
-      {/* STEP 5: Seeking, Religion */}
-      {step === 5 && <>
+      {/* STEP 6: Seeking, Religion */}
+      {step === 6 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>What You're Looking For</h2>
         
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 12 }}>I want...</h3>
@@ -511,8 +555,8 @@ function Onboarding({ me, setProfile, setPage }) {
         </div>
       </>}
 
-      {/* STEP 6: Fun Questions */}
-      {step === 6 && <>
+      {/* STEP 7: Fun Questions */}
+      {step === 7 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>A Little More About You</h2>
         
         <h3 style={{ fontSize: 16, color: '#ccc', marginBottom: 8 }}>Most embarrassing moment</h3>
@@ -582,8 +626,8 @@ function Onboarding({ me, setProfile, setPage }) {
         />
       </>}
 
-      {/* STEP 7: Music */}
-      {step === 7 && <>
+      {/* STEP 8: Music — FINAL SCREEN */}
+      {step === 8 && <>
         <h2 style={{ fontSize: 24, marginBottom: 24 }}>What Music Do You Love?</h2>
         
         <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 24 }}>
@@ -594,12 +638,12 @@ function Onboarding({ me, setProfile, setPage }) {
           ))}
         </div>
 
-        <p style={{ color: '#888', fontSize: 14, marginTop: 20 }}>
-          That's everything! Tap Finish to meet people ✨
+        <p style={{ color: '#4ade4a', fontSize: 16, marginTop: 20, textAlign: 'center' }}>
+          ✨ You're all set! Tap Submit to join Love That ✨
         </p>
       </>}
 
-      {/* Navigation Buttons */}
+      {/* Navigation */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 30 }}>
         {step > 1 ? (
           <button 
@@ -617,17 +661,18 @@ function Onboarding({ me, setProfile, setPage }) {
             display: 'flex', 
             alignItems: 'center', 
             gap: 6, 
-            padding: '12px 24px', 
+            padding: '14px 28px', 
             background: canProceed() ? '#E8654F' : '#444', 
             color: '#fff', 
             border: 'none', 
             borderRadius: 10, 
             fontSize: 16,
+            fontWeight: 600,
             opacity: canProceed() ? 1 : 0.6
           }}
         >
-          {saving ? 'Saving...' : step === 7 ? 'Finish 🎉' : 'Continue'}
-          {!saving && step < 7 && <ChevronRight size={18} />}
+          {saving ? 'Saving...' : step === 8 ? '🎉 Submit' : 'Continue'}
+          {!saving && step < 8 && <ChevronRight size={18} />}
         </button>
       </div>
     </div>
@@ -644,7 +689,7 @@ function Home({ me, profile, setPage }) {
       </header>
       
       <main className="homePage">
-        <h2 className="greeting">Hello, {profile.display_name}!</h2>
+        <h2 className="greeting">Hello, {profile.display_name}! 👋</h2>
         
         <button className="chatRoomHero" onClick={() => setPage('chatroom')}>
           <MessageCircle size={28} />
@@ -672,7 +717,6 @@ function Home({ me, profile, setPage }) {
   )
 }
 
-// --- Navigation ---
 function Nav({ setPage, active }) {
   const items = [
     { id: 'discover', label: 'Discover', icon: Sparkles },
@@ -694,7 +738,6 @@ function Nav({ setPage, active }) {
   )
 }
 
-// --- Chat Room ---
 function ChatRoom({ me, setPage }) {
   const [messages, setMessages] = useState([])
   const [newMessage, setNewMessage] = useState('')
@@ -804,7 +847,6 @@ function ChatRoom({ me, setPage }) {
   )
 }
 
-// --- Discover ---
 function Discover({ setPage }) {
   return (
     <div className="app">
@@ -819,7 +861,6 @@ function Discover({ setPage }) {
   )
 }
 
-// --- Shorts ---
 function Shorts({ setPage }) {
   return (
     <div className="app">
@@ -834,7 +875,6 @@ function Shorts({ setPage }) {
   )
 }
 
-// --- Profile ---
 function Profile({ me, profile, setProfile, setPage }) {
   const [photoUrl, setPhotoUrl] = useState(profile?.avatar_url || '')
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
@@ -923,7 +963,6 @@ function Profile({ me, profile, setProfile, setPage }) {
   )
 }
 
-// --- Settings ---
 function Settings({ setPage }) {
   async function signOut() {
     await supabase.auth.signOut()
@@ -942,5 +981,4 @@ function Settings({ setPage }) {
   )
 }
 
-// --- Mount ---
 createRoot(document.getElementById('root')).render(<App />)
