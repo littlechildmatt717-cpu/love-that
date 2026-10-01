@@ -37,78 +37,79 @@ function calculateAge(dobString) {
 }
 
 // ==================================================
-// ✅ FIXED APP — NO MORE FREEZING!
+// ✅ FIXED — NO MORE "PLEASE SIGN IN" STUCK SCREEN!
 // ==================================================
 function App() {
   const [page, setPage] = useState('splash')
   const [me, setMe] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (cancelled) return
-      setLoading(true)
-      setLoadError(null)
-
+    const init = async () => {
       try {
+        // First check: do we already have a session?
+        const { data: { session } } = await supabase.auth.getSession()
+        
         if (session?.user) {
           setMe(session.user)
-          
-          // Try to get profile — but DON'T hang if it fails
-          let profileData = null
+          // Try load profile
           try {
-            const { data, error } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .single()
-            
-            if (error && error.code !== 'PGRST116') { // PGRST116 = no row yet
-              console.warn('Profile fetch issue:', error)
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            setProfile(data)
+            if (!data?.gender) {
+              setPage('onboarding')
+            } else {
+              setPage('home')
             }
-            if (data) profileData = data
-          } catch (e) {
-            console.warn('Could not load profile:', e)
-          }
-          
-          setProfile(profileData)
-          
-          // ✅ Decide where to go — NEVER STUCK ON LOADING
-          if (!profileData?.gender) {
+          } catch {
+            // No profile found = brand new user → go to onboarding!
             setPage('onboarding')
-          } else {
-            setPage('home')
           }
         } else {
-          setMe(null)
-          setProfile(null)
           setPage('splash')
         }
-      } catch (err) {
-        console.error('Auth change error:', err)
-        setLoadError(err.message)
+      } catch (e) {
+        console.log('Init check:', e)
         setPage('splash')
       } finally {
         if (!cancelled) setLoading(false)
       }
+    }
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (cancelled) return
+      setLoading(true)
+      
+      if (session?.user) {
+        setMe(session.user)
+        // ✅ NEW SIGNUP → GO STRAIGHT TO ONBOARDING!
+        if (event === 'SIGNED_IN') {
+          try {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            setProfile(data)
+            if (!data?.gender) {
+              setPage('onboarding') // ✅ NOT "Please sign in"!
+            } else {
+              setPage('home')
+            }
+          } catch {
+            // Profile doesn't exist yet → brand new user!
+            setPage('onboarding') // ✅ GO HERE INSTEAD!
+          }
+        }
+      } else {
+        setMe(null)
+        setProfile(null)
+        setPage('splash')
+      }
+      setLoading(false)
     })
 
-    // Also check existing session on load
-    const initSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session) {
-          setLoading(false)
-        }
-      } catch {
-        setLoading(false)
-      }
-    }
-    initSession()
+    init()
 
     return () => {
       cancelled = true
@@ -118,31 +119,38 @@ function App() {
 
   if (loading) {
     return (
-      <div className="gate" style={{ background: '#000', color: '#fff' }}>
+      <div style={{ background: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
         <p style={{ fontSize: 18 }}>Loading…</p>
         <button 
-          onClick={() => { setLoading(false); setPage('splash') }}
+          onClick={() => setPage('splash')}
           style={{ marginTop: 20, padding: '10px 20px', background: '#333', color: '#fff', border: 'none', borderRadius: 8 }}
         >
-          ⏭️ Skip loading
+          ← Back
         </button>
       </div>
     )
   }
 
-  if (loadError) {
+  if (page === 'splash') return <Splash setPage={setPage} />
+  
+  // ✅ REMOVED THE BROKEN "Please sign in" SCREEN!
+  // If we get here and have NO user → go back to splash
+  if (!me) {
     return (
-      <div className="gate">
-        <p style={{ color: '#ff6b6b' }}>Error: {loadError}</p>
-        <button className="primary" onClick={() => { setLoadError(null); setPage('splash') }}>Retry</button>
+      <div style={{ background: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+        <p style={{ fontSize: 18, marginBottom: 20 }}>Create your account to get started</p>
+        <button 
+          onClick={() => setPage('splash')}
+          style={{ padding: '12px 24px', background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8, fontSize: 16 }}
+        >
+          ← Back to Join
+        </button>
       </div>
     )
   }
 
-  if (page === 'splash') return <Splash setPage={setPage} />
-  if (!me) return <div className="gate"><p>Please sign in</p></div>
   if (page === 'onboarding') return <Onboarding me={me} setProfile={setProfile} setPage={setPage} />
-  if (!profile) return <div className="gate"><p>Loading profile…</p></div>
+  if (!profile) return <Onboarding me={me} setProfile={setProfile} setPage={setPage} />
 
   const common = { me, profile, setProfile, setPage }
   switch (page) {
@@ -157,7 +165,7 @@ function App() {
 }
 
 // ==================================================
-// ✅ FIXED SPLASH — Create Account NEVER Freezes
+// ✅ SPLASH — CREATES ACCOUNT → GOES TO ONBOARDING
 // ==================================================
 function Splash({ setPage }) {
   const [email, setEmail] = useState('')
@@ -183,22 +191,21 @@ function Splash({ setPage }) {
       }
       
       if (!data?.user) {
-        setErr('No user account created — check your email for confirmation')
+        setErr('Check your email — confirm your account first')
         return
       }
 
-      // ✅ Create profile — if it fails, STILL go to onboarding!
+      // Create profile record
       try {
         await supabase.from('profiles').upsert({ 
           id: data.user.id, 
           display_name: name.trim() 
         })
       } catch (profileErr) {
-        console.warn('Profile note:', profileErr)
-        // Don't block — proceed anyway
+        console.warn('Profile created later:', profileErr)
       }
 
-      // ✅ GO STRAIGHT TO ONBOARDING — NO STUCK LOADING!
+      // ✅ ONBOARDING SHOULD SHOW NOW — NO STUCK SCREEN!
       setPage('onboarding')
       
     } catch (e) {
@@ -223,72 +230,106 @@ function Splash({ setPage }) {
   }
 
   return (
-    <div className="gate" style={{ background: '#000', minHeight: '100vh' }}>
-      <h1 style={{ fontSize: 36, marginBottom: 8, color: '#fff' }}>{APP_NAME}</h1>
-      <p style={{ marginBottom: 32, color: '#888' }}>Connect with people near you</p>
+    <div style={{ background: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <h1 style={{ fontSize: 42, marginBottom: 8, color: '#fff', fontWeight: 'bold' }}>{APP_NAME}</h1>
+      <p style={{ marginBottom: 40, color: '#888', fontSize: 18 }}>Connect with people near you</p>
       
       {mode === 'welcome' && <>
-        <button className="primary" onClick={() => setMode('login')}>Log in</button>
-        <button className="primary" style={{ marginTop: 12, background: '#222' }} onClick={() => setMode('signup')}>Create account</button>
+        <button 
+          className="primary" 
+          onClick={() => setMode('login')}
+          style={{ width: '100%', maxWidth: 320, padding: 16, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 12, fontSize: 18, marginBottom: 12 }}
+        >
+          Log in
+        </button>
+        <button 
+          className="primary" 
+          style={{ width: '100%', maxWidth: 320, padding: 16, background: '#2a2a2a', color: '#fff', border: 'none', borderRadius: 12, fontSize: 18 }}
+          onClick={() => setMode('signup')}
+        >
+          Create account
+        </button>
       </>}
 
       {mode === 'login' && <>
-        <h2 style={{ color: '#fff' }}>Welcome back</h2>
-        {err && <p style={{ color: '#ff6b6b' }}>{err}</p>}
+        <h2 style={{ color: '#fff', fontSize: 24, marginBottom: 24 }}>Welcome back</h2>
+        {err && <p style={{ color: '#ff6b6b', marginBottom: 16 }}>{err}</p>}
         <input 
           placeholder="Email" 
           value={email} 
           onChange={e => setEmail(e.target.value)} 
           type="email" 
-          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+          style={{ background: '#222', padding: 16, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff', fontSize: 16 }} 
         />
         <input 
           placeholder="Password" 
           value={pass} 
           onChange={e => setPass(e.target.value)} 
           type="password" 
-          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 16, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+          style={{ background: '#222', padding: 16, borderRadius: 10, marginBottom: 20, width: '100%', maxWidth: 320, border: 'none', color: '#fff', fontSize: 16 }} 
         />
-        <button className="primary" onClick={signIn} disabled={working}>
+        <button 
+          className="primary" 
+          onClick={signIn} 
+          disabled={working}
+          style={{ width: '100%', maxWidth: 320, padding: 16, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 12, fontSize: 18 }}
+        >
           {working ? 'Signing in…' : 'Sign in'}
         </button>
-        <button className="link" onClick={() => setMode('welcome')} style={{ color: '#E8654F', marginTop: 10 }}>← Back</button>
+        <button 
+          className="link" 
+          onClick={() => setMode('welcome')} 
+          style={{ color: '#E8654F', marginTop: 20, background: 'none', border: 'none', fontSize: 16 }}
+        >
+          ← Back
+        </button>
       </>}
 
       {mode === 'signup' && <>
-        <h2 style={{ color: '#fff' }}>Join {APP_NAME}</h2>
-        {err && <p style={{ color: '#ff6b6b' }}>{err}</p>}
+        <h2 style={{ color: '#fff', fontSize: 28, marginBottom: 24 }}>Join {APP_NAME}</h2>
+        {err && <p style={{ color: '#ff6b6b', marginBottom: 16, textAlign: 'center' }}>{err}</p>}
         <input 
           placeholder="Your name" 
           value={name} 
           onChange={e => setName(e.target.value)} 
-          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+          style={{ background: '#222', padding: 16, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff', fontSize: 16 }} 
         />
         <input 
           placeholder="Email" 
           value={email} 
           onChange={e => setEmail(e.target.value)} 
           type="email" 
-          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+          style={{ background: '#222', padding: 16, borderRadius: 10, marginBottom: 12, width: '100%', maxWidth: 320, border: 'none', color: '#fff', fontSize: 16 }} 
         />
         <input 
           placeholder="Password" 
           value={pass} 
           onChange={e => setPass(e.target.value)} 
           type="password" 
-          style={{ background: '#222', padding: 14, borderRadius: 10, marginBottom: 16, width: '100%', maxWidth: 320, border: 'none', color: '#fff' }} 
+          style={{ background: '#222', padding: 16, borderRadius: 10, marginBottom: 24, width: '100%', maxWidth: 320, border: 'none', color: '#fff', fontSize: 16 }} 
         />
-        <button className="primary" onClick={signUp} disabled={working}>
+        <button 
+          className="primary" 
+          onClick={signUp} 
+          disabled={working}
+          style={{ width: '100%', maxWidth: 320, padding: 16, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 12, fontSize: 18 }}
+        >
           {working ? 'Creating account…' : 'Create account'}
         </button>
-        <button className="link" onClick={() => setMode('welcome')} style={{ color: '#E8654F', marginTop: 10 }}>← Back</button>
+        <button 
+          className="link" 
+          onClick={() => setMode('welcome')} 
+          style={{ color: '#E8654F', marginTop: 20, background: 'none', border: 'none', fontSize: 16 }}
+        >
+          ← Back
+        </button>
       </>}
     </div>
   )
 }
 
 // ==================================================
-// ✅ ONBOARDING — All your screens included
+// ONBOARDING — ALL YOUR SCREENS
 // ==================================================
 function Onboarding({ me, setProfile, setPage }) {
   const [step, setStep] = useState(1)
@@ -303,7 +344,6 @@ function Onboarding({ me, setProfile, setPage }) {
     height_in: '',
     body_type: '',
     job_title: '',
-    goals: '',
     headline: '',
     bio: '',
     hobbies: '',
@@ -349,9 +389,9 @@ function Onboarding({ me, setProfile, setPage }) {
     try {
       const age = calculateAge(profileData.date_of_birth)
       
-      // ✅ Upsert profile — works whether row exists or not
       const { error } = await supabase.from('profiles').upsert({
         id: me.id,
+        display_name: profileData.display_name || 'Friend',
         ...profileData,
         age,
         height: profileData.height_ft && profileData.height_in 
@@ -366,10 +406,10 @@ function Onboarding({ me, setProfile, setPage }) {
       if (step < 8) {
         setStep(step + 1)
       } else {
-        setPage('home') // ✅ FINISH → HOME
+        setPage('home')
       }
     } catch (err) {
-      alert(`Could not save: ${err.message}. Try again or check your connection.`)
+      alert(`Could not save: ${err.message}`)
     } finally {
       setSaving(false)
     }
@@ -432,7 +472,7 @@ function Onboarding({ me, setProfile, setPage }) {
   )
 
   return (
-    <div className="app" style={{ padding: '20px', minHeight: '100vh', background: '#000', color: '#fff' }}>
+    <div style={{ padding: '20px', minHeight: '100vh', background: '#000', color: '#fff' }}>
       <div style={{ height: 4, background: '#333', borderRadius: 2, marginBottom: 20, overflow: 'hidden' }}>
         <div style={{ width: `${(step / 8) * 100}%`, height: '100%', background: '#E8654F', transition: 'width 0.3s' }} />
       </div>
@@ -598,28 +638,28 @@ function Onboarding({ me, setProfile, setPage }) {
   )
 }
 
-// --- Rest of the app ---
+// --- Home & Other Pages ---
 function Home({ me, profile, setPage }) {
   return (
-    <div className="app" style={{ background: '#000', color: '#fff', minHeight: '100vh' }}>
+    <div style={{ background: '#000', color: '#fff', minHeight: '100vh', paddingBottom: 80 }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderBottom: '1px solid #222' }}>
         <b style={{ fontSize: 20 }}>{APP_NAME}</b>
         <button onClick={() => setPage('settings')} style={{ background: 'none', border: 'none', color: '#fff' }}><SettingsIcon size={22} /></button>
       </header>
       <main style={{ padding: 20 }}>
-        <h2 style={{ fontSize: 22, marginBottom: 24 }}>Hello, {profile.display_name}! 👋</h2>
-        <button onClick={() => setPage('chatroom')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left' }}>
+        <h2 style={{ fontSize: 22, marginBottom: 24 }}>Hello, {profile.display_name || 'Friend'}! 👋</h2>
+        <button onClick={() => setPage('chatroom')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left', fontSize: 16 }}>
           <MessageCircle size={24} style={{ display: 'inline', marginRight: 12 }} />
           <b>Public Chat Room</b>
         </button>
-        <button onClick={() => setPage('shorts')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left' }}>
+        <button onClick={() => setPage('shorts')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left', fontSize: 16 }}>
           <Play size={24} style={{ display: 'inline', marginRight: 12 }} />
           <b>Shorts</b>
         </button>
         {Object.entries(P).map(([key, val]) => {
           const Icon = val[3]
           return (
-            <button key={key} onClick={() => setPage('discover')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left' }}>
+            <button key={key} onClick={() => setPage('discover')} style={{ width: '100%', padding: 20, background: '#222', border: 'none', borderRadius: 12, color: '#fff', marginBottom: 12, textAlign: 'left', fontSize: 16 }}>
               <Icon size={24} style={{ display: 'inline', marginRight: 12 }} />
               <b>{val[0]}</b>
             </button>
@@ -653,24 +693,24 @@ function Nav({ setPage, active }) {
   )
 }
 
-function ChatRoom({ me, setPage }) {
-  return <div style={{ padding: 20, color: '#fff' }}><h2>Chat Room</h2><p>Coming soon</p><button onClick={() => setPage('home')}>Back</button></div>
+function ChatRoom({ setPage }) {
+  return <div style={{ padding: 20, color: '#fff', background: '#000', minHeight: '100vh' }}><h2>Chat Room</h2><p>Coming soon</p><button onClick={() => setPage('home')} style={{ padding: 10, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8 }}>Back</button></div>
 }
 function Discover({ setPage }) {
-  return <div style={{ padding: 20, color: '#fff' }}><h2>Discover</h2><p>Coming soon</p><button onClick={() => setPage('home')}>Back</button></div>
+  return <div style={{ padding: 20, color: '#fff', background: '#000', minHeight: '100vh' }}><h2>Discover</h2><p>Coming soon</p><button onClick={() => setPage('home')} style={{ padding: 10, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8 }}>Back</button></div>
 }
 function Shorts({ setPage }) {
-  return <div style={{ padding: 20, color: '#fff' }}><h2>Shorts</h2><p>Coming soon</p><button onClick={() => setPage('home')}>Back</button></div>
+  return <div style={{ padding: 20, color: '#fff', background: '#000', minHeight: '100vh' }}><h2>Shorts</h2><p>Coming soon</p><button onClick={() => setPage('home')} style={{ padding: 10, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8 }}>Back</button></div>
 }
 function Profile({ setPage }) {
-  return <div style={{ padding: 20, color: '#fff' }}><h2>Profile</h2><button onClick={() => setPage('home')}>Back</button></div>
+  return <div style={{ padding: 20, color: '#fff', background: '#000', minHeight: '100vh' }}><h2>Profile</h2><button onClick={() => setPage('home')} style={{ padding: 10, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8 }}>Back</button></div>
 }
 function Settings({ setPage }) {
   async function signOut() { await supabase.auth.signOut(); setPage('splash') }
   return (
-    <div style={{ padding: 20, color: '#fff' }}>
+    <div style={{ padding: 20, color: '#fff', background: '#000', minHeight: '100vh' }}>
       <h2>Settings</h2>
-      <button onClick={signOut} style={{ padding: 12, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8, marginTop: 20 }}>Sign Out</button>
+      <button onClick={signOut} style={{ padding: 12, background: '#E8654F', color: '#fff', border: 'none', borderRadius: 8, marginTop: 20, width: '100%' }}>Sign Out</button>
       <button onClick={() => setPage('home')} style={{ marginLeft: 10, padding: 12, background: '#333', color: '#fff', border: 'none', borderRadius: 8 }}>Back</button>
     </div>
   )
