@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { 
-  Heart, Users, Flame, MessageCircle, UserRound, 
-  Settings as SettingsIcon, ChevronRight, ChevronLeft, 
-  CalendarDays, LogOut
+  Heart, Users, Flame, UserRound, Settings as SettingsIcon, 
+  ChevronRight, ChevronLeft, CalendarDays, LogOut
 } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import './styles.css'
@@ -171,7 +170,7 @@ function Splash({ setPage }) {
 }
 
 // ==================================================
-// ✅ ONBOARDING — 8 STEPS
+// ✅ ONBOARDING — 8 STEPS COMPLETE
 // ==================================================
 function Onboarding({ me, setProfile, setPage }) {
   const [step, setStep] = useState(1)
@@ -279,4 +278,150 @@ function Onboarding({ me, setProfile, setPage }) {
           <button key={opt} onClick={() => {
             const arr = profileData.looking_for
             update('looking_for', arr.includes(opt) ? arr.filter(x => x !== opt) : [...arr, opt])
-    
+          }} style={{ width: '100%', padding: 16, marginBottom: 10, background: profileData.looking_for.includes(opt) ? BRAND_RED : '#1a1a1a', border: 'none', borderRadius: 10, color: '#fff', fontSize: 16 }}>
+            {profileData.looking_for.includes(opt) ? '✅ ' : '  '}{opt}
+          </button>
+        ))}
+      </>}
+
+      <button 
+        onClick={saveAndNext} 
+        disabled={saving} 
+        style={{ width: '100%', padding: 18, marginTop: 30, background: BRAND_RED, color: '#fff', border: 'none', borderRadius: 12, fontSize: 18, fontWeight: 'bold' }}
+      >
+        {saving ? 'Saving…' : step === 8 ? '🎉 Finish & Start' : 'Continue →'}
+      </button>
+    </div>
+  )
+}
+
+// ==================================================
+// ✅ HOME — FULLY FIXED
+// ==================================================
+function Home({ profile, setPage, me }) {
+  const displayName = profile?.display_name || 'Friend'
+  const age = calculateAge(profile?.date_of_birth)
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#000', color: '#fff', paddingBottom: 80 }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #222' }}>
+        <h1 style={{ fontSize: 22, margin: 0, color: BRAND_RED }}>{APP_NAME}</h1>
+        <button 
+          onClick={() => supabase.auth.signOut().then(() => setPage('splash'))} 
+          style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: '#888' }}
+        >
+          <LogOut size={16} /> Sign Out
+        </button>
+      </header>
+
+      <main style={{ padding: 20 }}>
+        <div style={{ textAlign: 'center', margin: '20px 0 40px' }}>
+          <h2 style={{ fontSize: 28, marginBottom: 8 }}>Welcome, {displayName}! 👋</h2>
+          <p style={{ color: '#888' }}>You're all set up and ready to go ✨</p>
+          {age && <p style={{ color: BRAND_RED, marginTop: 5 }}>{age} • {profile?.gender || ''}</p>}
+        </div>
+
+        <h3 style={{ color: '#888', marginBottom: 15 }}>Quick Actions</h3>
+        
+        {[
+          { title: 'Discover People', desc: 'Find matches near you', icon: <Flame size={20} />, page: 'discover' },
+          { title: 'Your Profile', desc: 'View & edit details', icon: <UserRound size={20} />, page: 'profile' },
+          { title: 'Settings', desc: 'Account & preferences', icon: <SettingsIcon size={20} />, page: 'settings' },
+        ].map(item => (
+          <button 
+            key={item.page} 
+            onClick={() => setPage(item.page)} 
+            style={{ display: 'flex', alignItems: 'center', gap: 15, padding: 18, background: '#1a1a1a', border: 'none', borderRadius: 12, color: '#fff', justifyContent: 'space-between', marginBottom: 12, width: '100%' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
+              <span style={{ color: BRAND_RED }}>{item.icon}</span>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: 'bold' }}>{item.title}</div>
+                <div style={{ fontSize: 12, color: '#777' }}>{item.desc}</div>
+              </div>
+            </div>
+            <ChevronRight size={18} color="#666" />
+          </button>
+        ))}
+      </main>
+
+      <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#111', borderTop: '1px solid #222', display: 'flex', justifyContent: 'space-around', padding: '10px 0' }}>
+        {[
+          { id: 'home', icon: <Heart size={22} />, label: 'Home' },
+          { id: 'discover', icon: <Flame size={22} />, label: 'Discover' },
+          { id: 'profile', icon: <UserRound size={22} />, label: 'Profile' },
+          { id: 'settings', icon: <SettingsIcon size={22} />, label: 'Settings' },
+        ].map(tab => (
+          <button 
+            key={tab.id} 
+            onClick={() => setPage(tab.id)} 
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, background: 'none', border: 'none', color: tab.id === 'home' ? BRAND_RED : '#777' }}
+          >
+            {tab.icon}
+            <span style={{ fontSize: 10 }}>{tab.label}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  )
+}
+
+function Discover() {
+  return (
+    <div style={{ minHeight: '100vh', background: '#000', color: '#fff', padding: 20, paddingBottom: 80 }}>
+      <h2 style={{ textAlign: 'center', marginTop: 60 }}>
+        <Flame size={50} color={BRAND_RED} style={{ margin: '0 auto 20px', display: 'block' }} />
+        Discover People
+      </h2>
+      <p style={{ color: '#888', textAlign: 'center' }}>Search & match coming soon…</p>
+    </div>
+  )
+}
+
+function Profile({ profile }) {
+  const age = calculateAge(profile?.date_of_birth)
+  return (
+    <div style={{ minHeight: '100vh', background: '#000', color: '#fff', padding: 20, paddingBottom: 80 }}>
+      <h2 style={{ textAlign: 'center', marginBottom: 30 }}>Your Profile</h2>
+      
+      <div style={{ background: '#1a1a1a', borderRadius: 16, padding: 25, textAlign: 'center', marginBottom: 25 }}>
+        <div style={{ width: 80, height: 80, borderRadius: '50%', background: BRAND_RED, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, margin: '0 auto 15px' }}>
+          {(profile?.display_name || 'F')[0].toUpperCase()}
+        </div>
+        <h3 style={{ fontSize: 22, margin: 0 }}>{profile?.display_name || 'Friend'}</h3>
+        {age && <p style={{ color: BRAND_RED, margin: '5px 0' }}>{age} years old</p>}
+        <p style={{ color: '#888' }}>{profile?.gender || '—'} • {profile?.marital_status || '—'}</p>
+      </div>
+
+      {[
+        { label: 'Sexuality', value: profile?.sexuality || 'Not set' },
+        { label: 'Job / Role', value: profile?.job || 'Not set' },
+        { label: 'Bio', value: profile?.bio || 'Not set' },
+        { label: 'Hobbies', value: profile?.hobbies || 'Not set' },
+        { label: 'Music', value: profile?.music || 'Not set' },
+        { label: 'Quote', value: profile?.quote || 'Not set' },
+      ].map(i => (
+        <div key={i.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', background: '#1a1a1a', borderRadius: 10, marginBottom: 10 }}>
+          <span style={{ color: '#888' }}>{i.label}</span>
+          <span style={{ textAlign: 'right', maxWidth: '60%' }}>{i.value}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Settings({ setPage }) {
+  return (
+    <div style={{ minHeight: '100vh', background: '#000', color: '#fff', padding: 20, paddingBottom: 80 }}>
+      <h2 style={{ textAlign: 'center', marginBottom: 30 }}>Settings</h2>
+      <button 
+        onClick={() => supabase.auth.signOut().then(() => setPage('splash'))} 
+        style={{ width: '100%', padding: 16, background: '#222', color: '#ff6666', border: 'none', borderRadius: 12, fontSize: 16 }}
+      >
+        <LogOut size={16} style={{ display: 'inline', marginRight: 8 }} /> Sign Out
+      </button>
+    </div>
+  )
+}
+
+createRoot(document.getElementById('root')).render(<App />)
