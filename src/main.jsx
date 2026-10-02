@@ -284,4 +284,76 @@ function DateNight({me,openChat,startCall,back}){
  </div></main>
 }
 
-function Discover({platform,people,like,back}){const x=P[platform],p=people[0];async function safety(action){if(!p)return;if(action==='report'){const reason=prompt('Why are you reporting this person?');if(!reason)return;const r=await supabase.functions.invoke('report-user',{body:{reported_id:p.id,reason,block:true}});if(r.error)alert(r.error.message);else{alert('Thank you. Your report has been submitted.');back()}}else{const r=await supabase.from('blocks').insert({blocker_id:(await supabase.auth.getUser()).data.user.id,blocked_id:p.id});if(r.error)alert(r.error.message);else{alert('Profile blocked.');back()}}}return <main className="scroll"><button className="back" onClick={back}><ArrowLeft/> {x[0]}</button>{p?<div className="card">{p.photo?<div className="photo" style={{backgroundImage:`url(${p.photo})`}}><div><h2>{p.display_name}, {p.age}</h2><span>{p.location}</span></div></div>:<div className="photo placeholder"><UserRound/></div>}<section><h3>{p.headline||'Nice to meet you.'}</h3><p className="muted">{p.bio}</p><p className="muted">Looking for {Object.keys(goalDb).find(k=>goalDb[k]===p.goal)||'connections'}.</p></section><div className="safetyRow"><button onClick={()=>safety('report')}><Flag/> Report</button><button onClick={()=>safety('block')}><Lock/> Block</button></div><div className
+function Discover({ platform, people, like, back }) {
+  const x = P[platform];
+  const p = people[0];
+
+  async function safety(action) {
+    if (!p) return;
+    if (action === 'report') {
+      const reason = prompt('Why are you reporting this person?');
+      if (!reason) return;
+      const r = await supabase.functions.invoke('report-user', {
+        body: { reported_id: p.id, reason, block: true }
+      });
+      if (r.error) alert(r.error.message);
+      else {
+        alert('Thank you. Your report has been submitted.');
+        back();
+      }
+    } else {
+      const r = await supabase.from('blocks').insert({
+        blocker_id: (await supabase.auth.getUser()).data.user.id,
+        blocked_id: p.id
+      });
+      if (r.error) alert(r.error.message);
+      else {
+        alert('Profile blocked.');
+        back();
+      }
+    }
+  }
+
+  return (
+    <main className="scroll">
+      <button className="back" onClick={back}>
+        <ArrowLeft /> {x[0]}
+      </button>
+      {p ? (
+        <div className="card">
+          {p.photo ? (
+            <div
+              className="photo"
+              style={{ backgroundImage: `url(${p.photo})` }}
+            >
+              <div>
+                <h2>{p.display_name}, {p.age}</h2>
+                <span>{p.location}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="photo placeholder">
+              <UserRound />
+            </div>
+          )}
+          <section>
+            <h3>{p.headline || 'Nice to meet you.'}</h3>
+            <p className="muted">{p.bio}</p>
+            <p className="muted">
+              Looking for {Object.keys(goalDb).find(k => goalDb[k] === p.goal) || 'connections'}.
+            </p>
+          </section>
+          <div className="safetyRow">
+            <button onClick={() => safety('report')}>
+              <Flag /> Report
+            </button>
+            <button onClick={() => safety('block')}>
+              <Lock /> Block
+            </button>
+          </div>
+          {/* ↓ Add any missing closing tags here if needed ↓ */}
+        </div>
+      ) : null}
+    </main>
+  );
+}
