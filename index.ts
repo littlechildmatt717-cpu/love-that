@@ -1,68 +1,63 @@
-// Called by a Supabase Database Webhook on INSERT into public.calls.
-// ASSUMED columns: calls(id, caller_id, callee_id, type). profiles(id, name). Adjust below.
-import { createClient } from "npm:@supabase/supabase-js@2";
-import { SignJWT, importPKCS8 } from "npm:jose@5";
+// Called by database triggers (see migration). Deploy with --no-verify-jwt; protected by x-webhook-secret.
+import { admin, nameOf, sendPush } from "../_shared/fcm.ts";
 
-const sa = JSON.parse(Deno.env.get("FCM_SERVICE_ACCOUNT")!);
-const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET")!;
-const admin = createClient(
-  Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-);
-
-async function fcmAccessToken(): Promise<string> {
-  const key = await importPKCS8(sa.private_key, "RS256");
-  const jwt = await new SignJWT({ scope: "https://www.googleapis.com/auth/firebase.messaging" })
-    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
-    .setIssuer(sa.client_email).setSubject(sa.client_email)
-    .setAudience("https://oauth2.googleapis.com/token")
-    .setIssuedAt().setExpirationTime("55m").sign(key);
-  const r = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: jwt }),
-  });
-  return (await r.json()).access_token;
-}
+const SECRET = Deno.env.get("WEBHOOK_SECRET")!;
 
 Deno.serve(async (req) => {
-  if (req.headers.get("x-webhook-secret") !== WEBHOOK_SECRET) return new Response("forbidden", { status: 403 });
+  if (req.headers.get("x-webhook-secret") !== SECRET) return new Response("forbidden", { status: 403 });
+  const { type, table, record: r, old_record: old } = await req.json();
 
-  const { record } = await req.json();
-  const { id, caller_id, callee_id, type } = record;
-
-  const [{ data: caller }, { data: tokens }] = await Promise.all([
-    admin.from("profiles").select("name").eq("id", caller_id).maybeSingle(),
-    admin.from("device_tokens").select("token").eq("user_id", callee_id),
-  ]);
-  if (!tokens?.length) return new Response("no tokens");
-
-  const access = await fcmAccessToken();
-  const name = caller?.name ?? "Someone";
-  const kind = type === "video" ? "video" : "audio";
-
-  for (const { token } of tokens) {
-    const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: {
-          token,
-          notification: { title: `📞 ${name} is calling`, body: `Incoming ${kind} call` },
-          data: { type: "call", callId: String(id), callerId: String(caller_id), callType: kind },
-          android: {
-            priority: "HIGH",
-            ttl: "30s",
-            notification: { channel_id: "calls", sound: "default", default_vibrate_timings: "true" },
-          },
-        },
-      }),
-    });
-    if (res.status === 404 || res.status === 400) {
-      const err = await res.text();
-      if (err.includes("UNREGISTERED") || err.includes("INVALID_ARGUMENT"))
-        await admin.from("device_tokens").delete().eq("token", token);
+  try {
+    // 💬 Messages (text now; photos/videos once they pass safety review)
+    if (table === "messages") {
+      const justApproved = type === "UPDATE" && r.media_path && r.media_status === "approved" && old?.media_status !== "approved";
+      const isText = type === "INSERT" && !r.media_path && r.body;
+      if (!justApproved && !isText) return new Response("skip");
+      const { data: c } = await admin.from("conversations").select("user_a,user_b").eq("id", r.conversation_id).maybeSingle();
+      if (!c) return new Response("no convo");
+      const to = c.user_a === r.sender_id ? c.user_b : c.user_a;
+      const body = isText
+        ? String(r.body).slice(0, 100)
+        : r.media_type === "video" ? "Sent you a video" : "Sent you a photo";
+      await sendPush(to, {
+        title: `💬 ${await nameOf(r.sender_id)}`, body, channelId: "general",
+        data: { type: "message", conversationId: String(r.conversation_id) },
+      });
     }
+
+    // ❤️ Short likes
+    if (table === "short_likes" && type === "INSERT") {
+      const { data: v } = await admin.from("short_videos").select("user_id").eq("id", r.video_id).maybeSingle();
+      if (v && v.user_id !== r.user_id)
+        await sendPush(v.user_id, {
+          title: `❤️ ${await nameOf(r.user_id)} loved your Short`, body: "", channelId: "general",
+          data: { type: "short_like", videoId: String(r.video_id) },
+        });
+    }
+
+    // 💬 Short comments
+    if (table === "short_comments" && type === "INSERT") {
+      const { data: v } = await admin.from("short_videos").select("user_id").eq("id", r.video_id).maybeSingle();
+      if (v && v.user_id !== r.user_id)
+        await sendPush(v.user_id, {
+          title: `💬 ${await nameOf(r.user_id)} commented on your Short`,
+          body: String(r.body ?? "").slice(0, 100), channelId: "general",
+          data: { type: "short_comment", videoId: String(r.video_id) },
+        });
+    }
+
+    // 💘 Mutual likes (new row in matches)
+    if (table === "matches" && type === "INSERT") {
+      const [na, nb] = await Promise.all([nameOf(r.user_a), nameOf(r.user_b)]);
+      await Promise.all([
+        sendPush(r.user_a, { title: "💘 It's mutual!", body: `You and ${nb} liked each other`, channelId: "matches", data: { type: "match", userId: String(r.user_b) } }),
+        sendPush(r.user_b, { title: "💘 It's mutual!", body: `You and ${na} liked each other`, channelId: "matches", data: { type: "match", userId: String(r.user_a) } }),
+      ]);
+    }
+
+    // ❤️ Likes — needs your likes table; see SETUP.md step 6.
+  } catch (e) {
+    return new Response(String(e), { status: 500 });
   }
   return new Response("ok");
 });

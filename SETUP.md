@@ -1,55 +1,36 @@
-# Incoming-call push (Capacitor + Supabase + FCM)
+# Setup — do these in order
 
-## 1. Install plugin
-    npm i @capacitor/push-notifications
+## 1. Replace files in your repo
+- `main.jsx` → `src/main.jsx`
+- `Gradle1.yml` → your workflow file (`.github/workflows/…`)
+- `supabase/functions/_shared`, `notify-call`, `push-notify` → same paths in your repo
 
-## 2. Database
-Run `supabase/migrations/20261003_device_tokens.sql` (SQL editor or `supabase db push`).
+## 2. Add the push plugin
+Add `@capacitor/push-notifications` to package.json (same major version as your `@capacitor/core`), commit package-lock.json too.
 
-## 3. Edge function
-    supabase functions deploy notify-call --no-verify-jwt
-    supabase secrets set WEBHOOK_SECRET=<random string>
+## 3. GitHub secret
+Repo → Settings → Secrets → Actions → new secret `GOOGLE_SERVICES_JSON_BASE64`:
+the base64 of your google-services.json (`base64 -w0 google-services.json`, or any online base64 encoder).
+The Capacitor `appId` must be `com.meetdating.app` to match that file.
+
+## 4. Firebase service account → Supabase
+Firebase console → Project settings → Service accounts → Generate new private key (project love-that).
     supabase secrets set FCM_SERVICE_ACCOUNT="$(cat service-account.json)"
-Service account JSON: Firebase console → Project settings → Service accounts → Generate new private key
-(project `love-that`). Never commit it.
+    supabase secrets set WEBHOOK_SECRET=<any long random string>
+    supabase functions deploy notify-call
+    supabase functions deploy push-notify --no-verify-jwt
 
-## 4. Database webhook
-Supabase dashboard → Database → Webhooks → Create:
-- Table `calls`, event INSERT
-- Type: Supabase Edge Function → `notify-call`
-- Add HTTP header `x-webhook-secret: <same random string>`
+## 5. Database
+Open `supabase/migrations/20261003_push.sql`, replace YOUR_PROJECT_REF and YOUR_WEBHOOK_SECRET, run it in the SQL editor.
+It also fixes the picture "messages_body_check" error.
 
-## 5. GitHub Actions (android folder is regenerated each build)
-Add repo secret `GOOGLE_SERVICES_JSON_BASE64` (`base64 -w0 google-services.json`), then add this step in
-`.github/workflows/android.yml` right AFTER "Sync Capacitor Android project":
+## 6. ❤️ Likes (one thing I can't see)
+Likes go through your `like-user` function, which I haven't seen. Send me that function (or the name of the table it writes to)
+and I'll add the like notification. Until then, mutual likes (💘) work.
 
-      - name: Add google-services.json
-        run: echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 --decode > android/app/google-services.json
+## Already working without FCM
+30-minute event reminders are scheduled on the phone itself by your existing code, so they fire even when the app is closed.
 
-Capacitor's generated Gradle applies the Google Services plugin automatically when that file exists.
-Also make sure `android.permission.POST_NOTIFICATIONS` ends up in AndroidManifest
-(add it to scripts/configure-media-permissions.py if it's missing).
-
-## 6. App code
-After login: `registerPush(supabase, user.id, ({callId}) => navigate(`/call/${callId}`))`
-On logout: `await unregisterPush(supabase)` before `supabase.auth.signOut()`.
-
-## Limits
-This shows a heads-up notification with sound; tapping opens the call. A full-screen ringing screen over the
-lock screen needs a native call-UI plugin (e.g. a CallKit/ConnectionService plugin) — can be added later.
-The call itself still needs working signaling + a TURN server.
-
-## 7. Profile pop-up while ringing
-Copy `src/components/CallProfileCard.*` into your project, then on your call screen:
-
-    {(status === "calling" || status === "ringing") && (
-      <CallProfileCard
-        supabase={supabase}
-        otherUserId={isCaller ? call.callee_id : call.caller_id}
-        mode={isCaller ? "calling" : "incoming"}
-        onHangup={endCall}
-        onAnswer={answerCall}
-      />
-    )}
-
-It hides itself as soon as status changes to connected. Adjust the `profiles` columns in the `select()` to match yours.
+## Notes
+- Android 13+ asks for notification permission on first launch after login.
+- If you get two banners for one message while the app is in the background, tell me and I'll de-duplicate.
