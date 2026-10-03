@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1022750924925",
+    "project_id": "love-that",
+    "storage_bucket": "love-that.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1022750924925:android:8738728a71e3f561cdd114",
+        "android_client_info": {
+          "package_name": "com.meetdating.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB5LEyqCIv3LLu6fEihq3_mUJNB1_3rBVg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
