@@ -56,13 +56,63 @@ function App(){
   restoreSession()
   return()=>{alive=false;if(profileLoadTimer)clearTimeout(profileLoadTimer);subscription.unsubscribe()}
  },[])
- useEffect(()=>{if(!session)return;const ch=supabase.channel('incoming-calls-'+session.user.id).on('postgres_changes',{event:'INSERT',schema:'public',table:'private_call_sessions',filter:`callee_id=eq.${session.user.id}`},async payload=>{if(payload.new.status==='ringing'&&payload.new.offer){const{data:ps}=await supabase.from('profiles').select('id,display_name,age').eq('id',payload.new.caller_id).maybeSingle();const{data:conv}=await supabase.from('conversations').select('*').eq('id',payload.new.conversation_id).maybeSingle();setIncoming({call:payload.new,conversation:conv,person:ps||{id:payload.new.caller_id,display_name:'Member'}})}}).subscribe();return()=>{supabase.removeChannel(ch)}},[session?.user?.id])
- const mutualSeen=React.useRef(new Set()),[mutual,setMutual]=useState(null),[convos,setConvos]=useState([]),[reminder,setReminder]=useState(null),knownMatches=React.useRef(null),pollRef=React.useRef(null)
+ useEffect(()=>{
+  if(!session)return
+  const uid=session.user.id,seenCalls=new Set()
+  const handleCall=async payload=>{
+   const n=payload.new
+   if(!n)return
+   if(n.status&&n.status!=='ringing'){setIncoming(cur=>cur&&cur.call.id===n.id?null:cur);return}
+   if(n.status!=='ringing'||!n.offer||n.answer||seenCalls.has(n.id))return
+   if(n.created_at&&Date.now()-new Date(n.created_at).getTime()>90000)return
+   seenCalls.add(n.id)
+   const{data:ps}=await supabase.from('profiles').select('id,display_name,age').eq('id',n.caller_id).maybeSingle()
+   const{data:conv}=await supabase.from('conversations').select('*').eq('id',n.conversation_id).maybeSingle()
+   setIncoming({call:n,conversation:conv,person:ps||{id:n.caller_id,display_name:'Member'}})
+   if(document.hidden)showLocalNotification('Incoming '+(n.call_type==='audio'?'audio':'video')+' call',(ps?.display_name||'Someone')+' is calling you')
+  }
+  const filter='callee_id=eq.'+uid
+  const ch=supabase.channel('incoming-calls-'+uid)
+   .on('postgres_changes',{event:'INSERT',schema:'public',table:'private_call_sessions',filter},handleCall)
+   .on('postgres_changes',{event:'UPDATE',schema:'public',table:'private_call_sessions',filter},handleCall)
+   .subscribe()
+  const poll=setInterval(async()=>{
+   try{const since=new Date(Date.now()-60000).toISOString()
+    const{data}=await supabase.from('private_call_sessions').select('*').eq('callee_id',uid).eq('status','ringing').gt('created_at',since).not('offer','is',null).is('answer',null).limit(1)
+    if(data&&data[0])handleCall({new:data[0]})}catch{}
+  },3000)
+  return()=>{clearInterval(poll);supabase.removeChannel(ch)}
+ },[session?.user?.id])
+ const mutualSeen=React.useRef(new Set()),[mutual,setMutual]=useState(null),[convos,setConvos]=useState([]),[reminder,setReminder]=useState(null),knownMatches=React.useRef(null),pollRef=React.useRef(null),pageRef=React.useRef('home')
  useEffect(()=>{if(!session)return;const uid=session.user.id;const handle=payload=>{const row=payload.new;const other=row.user_a===uid?row.user_b:row.user_a;showMutual({id:other})};const ch=supabase.channel('my-matches-'+uid).on('postgres_changes',{event:'INSERT',schema:'public',table:'matches',filter:`user_a=eq.${uid}`},handle).on('postgres_changes',{event:'INSERT',schema:'public',table:'matches',filter:`user_b=eq.${uid}`},handle).subscribe();return()=>{supabase.removeChannel(ch)}},[session?.user?.id])
  useEffect(()=>{if(session&&profile)loadMatches()},[session?.user?.id,!!profile])
  pollRef.current=pollMatches
  useEffect(()=>{if(!session||!profile)return;const t=setInterval(()=>pollRef.current&&pollRef.current(),8000);const vis=()=>{if(!document.hidden&&pollRef.current)pollRef.current()};document.addEventListener('visibilitychange',vis);return()=>{clearInterval(t);document.removeEventListener('visibilitychange',vis)}},[session?.user?.id,!!profile])
  useEffect(()=>{if(!profile?.id)return;syncDateReminders(profile.id);checkReminders();const t=setInterval(checkReminders,20000);const h=e=>setReminder(e.detail);window.addEventListener('love-that-reminder',h);return()=>{clearInterval(t);window.removeEventListener('love-that-reminder',h)}},[profile?.id])
+ pageRef.current=page
+ useEffect(()=>{
+  if(!profile?.id)return
+  requestNotifyPermission()
+  const uid=profile.id
+  const nameOf=async id=>{try{const{data}=await supabase.from('profiles').select('display_name').eq('id',id).maybeSingle();return data?.display_name||'Someone'}catch{return 'Someone'}}
+  const ownerOf=async vid=>{try{const{data}=await supabase.from('short_videos').select('user_id').eq('id',vid).maybeSingle();return data?.user_id}catch{return null}}
+  const ch=supabase.channel('notify-'+uid)
+   .on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},async p=>{
+     const m=p.new;if(!m||m.sender_id===uid)return
+     if(!document.hidden&&pageRef.current==='chat')return
+     const n=await nameOf(m.sender_id)
+     notifyUser('New message from '+n,m.body?String(m.body).slice(0,100):(m.media_type==='video'?'Sent you a video':'Sent you a photo'))})
+   .on('postgres_changes',{event:'INSERT',schema:'public',table:'short_likes'},async p=>{
+     const l=p.new;if(!l||l.user_id===uid)return
+     if((await ownerOf(l.video_id))!==uid)return
+     notifyUser('❤️ '+(await nameOf(l.user_id))+' loved your Short','')})
+   .on('postgres_changes',{event:'INSERT',schema:'public',table:'short_comments'},async p=>{
+     const c=p.new;if(!c||c.user_id===uid)return
+     if((await ownerOf(c.video_id))!==uid)return
+     notifyUser('💬 '+(await nameOf(c.user_id))+' commented on your Short',String(c.body||'').slice(0,100))})
+   .subscribe()
+  return()=>{supabase.removeChannel(ch)}
+ },[profile?.id])
  useEffect(()=>{if(page==='messages'&&session&&profile){loadConvos();const t=setInterval(loadConvos,15000);return()=>clearInterval(t)}},[page,session?.user?.id,!!profile])
  async function showMutual(person){
   if(!person?.id||mutualSeen.current.has(person.id))return
@@ -73,6 +123,7 @@ function App(){
    full={...(ps||person),photo:await photoFor(person.id)}
   }
   setMutual(full)
+  if(document.hidden)showLocalNotification("It's mutual! 💘",(full.display_name||'Someone')+' likes you too')
   loadMatches()
  }
  async function likeUser(p){
@@ -344,7 +395,7 @@ function PrivateMessage({x,me}){const[url,setUrl]=useState(null);useEffect(()=>{
 function IncomingCall({incoming,accept,decline}){return <div className="incomingCall"><div><Phone/><h2>Incoming video call</h2><p><b>{incoming.person?.display_name||'Member'}</b> is calling you.</p><div className="incomingActions"><button className="primary" onClick={accept}><Video/> Answer</button><button className="danger" onClick={decline}><PhoneOff/> Decline</button></div></div></div>}
 function CallOverlay({me,call,close}){return <WebRTCCall me={me} call={call} close={close}/>}
 function WebRTCCall({me,call,close}){const[status,setStatus]=useState('Connecting…'),[muted,setMuted]=useState(false),[cameraOff,setCameraOff]=useState(call.mode==='audio'),[remote,setRemote]=useState(null);const localRef=React.useRef(null),remoteRef=React.useRef(null),pcRef=React.useRef(null),callIdRef=React.useRef(null),seenRef=React.useRef(new Set());
- useEffect(()=>{let dead=false;async function run(){try{const conv=call.conversation;let mine=call.incoming;if(!mine){const other=conv.user_a===me.id?conv.user_b:conv.user_a;const r=await supabase.from('private_call_sessions').insert({conversation_id:conv.id,caller_id:me.id,callee_id:other,offer:null,call_type:call.mode}).select('*').single();mine=r.data;if(r.error||!mine)throw r.error||new Error('Could not start call')}callIdRef.current=mine.id;const turnRes=await supabase.functions.invoke('turn-credentials',{body:{}}); const iceServers=turnRes.data?.ice_servers?.length?turnRes.data.ice_servers:[{urls:'stun:stun.l.google.com:19302'}]; const pc=new RTCPeerConnection({iceServers});pcRef.current=pc;const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:(mine.call_type||call.mode)==='video'});localRef.current.srcObject=stream;stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.ontrack=e=>{setRemote(e.streams[0]);if(remoteRef.current)remoteRef.current.srcObject=e.streams[0]};pc.onicecandidate=e=>{if(e.candidate)supabase.from('private_call_ice').insert({call_id:mine.id,sender_id:me.id,candidate:e.candidate.toJSON()})};if(call.incoming){await pc.setRemoteDescription(mine.offer);const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await supabase.from('private_call_sessions').update({answer,status:'connected'}).eq('id',mine.id);setStatus('Connected')}else{const offer=await pc.createOffer();await pc.setLocalDescription(offer);await supabase.from('private_call_sessions').update({offer}).eq('id',mine.id);setStatus('Calling…')}const ch=supabase.channel('call-'+mine.id).on('postgres_changes',{event:'UPDATE',schema:'public',table:'private_call_sessions',filter:`id=eq.${mine.id}`},async payload=>{const row=payload.new;if(row.answer&&!pc.currentRemoteDescription){await pc.setRemoteDescription(row.answer);setStatus('Connected')}if(row.status==='ended'||row.status==='declined')setStatus(row.status==='ended'?'Call ended':'Call declined')}).on('postgres_changes',{event:'INSERT',schema:'public',table:'private_call_ice',filter:`call_id=eq.${mine.id}`},async payload=>{if(payload.new.sender_id!==me.id&&!seenRef.current.has(payload.new.id)){seenRef.current.add(payload.new.id);try{await pc.addIceCandidate(payload.new.candidate)}catch{}}}).subscribe();const {data:existingIce}=await supabase.from('private_call_ice').select('id,sender_id,candidate').eq('call_id',mine.id).neq('sender_id',me.id);for(const c of existingIce||[]){seenRef.current.add(c.id);try{await pc.addIceCandidate(c.candidate)}catch{}}if(!dead){const timer=setInterval(async()=>{const{data:c}=await supabase.from('private_call_sessions').select('*').eq('id',mine.id).maybeSingle();if(c?.answer&&!pc.currentRemoteDescription){await pc.setRemoteDescription(c.answer);setStatus('Connected')}},1000);return()=>clearInterval(timer)}return()=>{};}catch(e){if(!dead)setStatus(e.message||'Call unavailable')}}run();return()=>{dead=true;const pc=pcRef.current;pc?.getSenders().forEach(s=>s.track?.stop());if(callIdRef.current)supabase.from('private_call_sessions').update({status:'ended',ended_at:new Date().toISOString()}).eq('id',callIdRef.current);pc?.close()}},[]);
+ useEffect(()=>{let dead=false;async function run(){try{const conv=call.conversation;let mine=call.incoming;if(!mine){const other=conv.user_a===me.id?conv.user_b:conv.user_a;const r=await supabase.from('private_call_sessions').insert({conversation_id:conv.id,caller_id:me.id,callee_id:other,offer:null,call_type:call.mode}).select('*').single();mine=r.data;if(r.error||!mine)throw r.error||new Error('Could not start call')}callIdRef.current=mine.id;const turnRes=await supabase.functions.invoke('turn-credentials',{body:{}}); const iceServers=turnRes.data?.ice_servers?.length?turnRes.data.ice_servers:[{urls:'stun:stun.l.google.com:19302'}]; const pc=new RTCPeerConnection({iceServers});pcRef.current=pc;const pendingIce=[];const addIce=async c=>{if(pc.remoteDescription){try{await pc.addIceCandidate(c)}catch{}}else pendingIce.push(c)};const flushIce=async()=>{while(pendingIce.length){const c=pendingIce.shift();try{await pc.addIceCandidate(c)}catch{}}};const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:(mine.call_type||call.mode)==='video'});localRef.current.srcObject=stream;stream.getTracks().forEach(t=>pc.addTrack(t,stream));pc.ontrack=e=>{setRemote(e.streams[0]);if(remoteRef.current)remoteRef.current.srcObject=e.streams[0]};pc.onicecandidate=e=>{if(e.candidate)supabase.from('private_call_ice').insert({call_id:mine.id,sender_id:me.id,candidate:e.candidate.toJSON()})};if(call.incoming){await pc.setRemoteDescription(mine.offer);await flushIce();const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await supabase.from('private_call_sessions').update({answer,status:'connected'}).eq('id',mine.id);setStatus('Connected')}else{const offer=await pc.createOffer();await pc.setLocalDescription(offer);await supabase.from('private_call_sessions').update({offer}).eq('id',mine.id);setStatus('Calling…')}const ch=supabase.channel('call-'+mine.id).on('postgres_changes',{event:'UPDATE',schema:'public',table:'private_call_sessions',filter:`id=eq.${mine.id}`},async payload=>{const row=payload.new;if(row.answer&&!pc.currentRemoteDescription){await pc.setRemoteDescription(row.answer);await flushIce();setStatus('Connected')}if(row.status==='ended'||row.status==='declined')setStatus(row.status==='ended'?'Call ended':'Call declined')}).on('postgres_changes',{event:'INSERT',schema:'public',table:'private_call_ice',filter:`call_id=eq.${mine.id}`},async payload=>{if(payload.new.sender_id!==me.id&&!seenRef.current.has(payload.new.id)){seenRef.current.add(payload.new.id);await addIce(payload.new.candidate)}}).subscribe();const {data:existingIce}=await supabase.from('private_call_ice').select('id,sender_id,candidate').eq('call_id',mine.id).neq('sender_id',me.id);for(const c of existingIce||[]){seenRef.current.add(c.id);await addIce(c.candidate)}if(!dead){const timer=setInterval(async()=>{const{data:c}=await supabase.from('private_call_sessions').select('*').eq('id',mine.id).maybeSingle();if(c?.answer&&!pc.currentRemoteDescription){await pc.setRemoteDescription(c.answer);await flushIce();setStatus('Connected')}},1000);return()=>clearInterval(timer)}return()=>{};}catch(e){if(!dead)setStatus(e.message||'Call unavailable')}}run();return()=>{dead=true;const pc=pcRef.current;pc?.getSenders().forEach(s=>s.track?.stop());if(callIdRef.current)supabase.from('private_call_sessions').update({status:'ended',ended_at:new Date().toISOString()}).eq('id',callIdRef.current);pc?.close()}},[]);
  useEffect(()=>{if(remote&&remoteRef.current)remoteRef.current.srcObject=remote},[remote]);return <div className="callOverlay"><div className="callTop"><button onClick={close}><PhoneOff/></button><b>{call.person.display_name}</b><span>{status}</span></div><video className="remoteVideo" ref={remoteRef} autoPlay playsInline poster="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" style={{display:remote?'block':'none'}}/>{/denied|notallowed|permission/i.test(String(status))&&<div style={{position:'absolute',top:'30%',left:20,right:20,zIndex:5,background:'rgba(23,22,27,.95)',border:'1px solid #E8654F',borderRadius:16,padding:16,color:'#fff',textAlign:'center',lineHeight:1.4}}><b>Camera or microphone is blocked</b><br/>Open your phone Settings → Apps → love that → Permissions, allow Camera and Microphone, then try the call again.</div>}<video className="localVideo" ref={localRef} autoPlay muted playsInline poster="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" style={{display:cameraOff?'none':'block'}}/><div className="callControls">{call.speedPair&&<button className="callHeart" onClick={async()=>{const r=await supabase.rpc('speed_dating_like',{p_pair_id:call.speedPair});if(r.data?.mutual)alert('It’s a mutual like! You can continue chatting after the date.')}}><Heart fill="currentColor"/></button>}<button onClick={()=>{const s=localRef.current?.srcObject?.getAudioTracks()?.[0];if(s){s.enabled=!s.enabled;setMuted(!s.enabled)}}}>{muted?<MicOff/>:<Mic/>}</button>{call.mode==='video'&&<button onClick={()=>{const s=localRef.current?.srcObject?.getVideoTracks()?.[0];if(s){s.enabled=!s.enabled;setCameraOff(!s.enabled)}}}>{cameraOff?<CameraOff/>:<Camera/>}</button>}<button className="hangup" onClick={close}><PhoneOff/></button></div></div>}
 function SpeedDating({me,startCall,back}){const[state,setState]=useState('idle'),[partner,setPartner]=useState(null),[pair,setPair]=useState(null),[ends,setEnds]=useState(null),[confirm,setConfirm]=useState(false),[error,setError]=useState(''),[seconds,setSeconds]=useState(120);function london(){const p=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date()).map(x=>[x.type,x.value]));const d=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(p.weekday);return {active:(d===0||d===6)&&Number(p.hour)*60+Number(p.minute)>=1200&&Number(p.hour)*60+Number(p.minute)<1230}}async function join(mode='join'){setError('');const{data,error}=await supabase.rpc('speed_dating_join',{p_mode:mode});if(error){setError(error.message);return}setState(data.state);if(data.partner_id){const{data:p}=await supabase.from('profiles').select('id,display_name,age').eq('id',data.partner_id).single();setPartner(p);setPair(data.pair_id);setEnds(data.round_ends_at);setSeconds(Math.max(0,Math.ceil((new Date(data.round_ends_at)-Date.now())/1000)));const cr=await supabase.functions.invoke('start-conversation',{body:{other_user_id:data.partner_id}});if(!cr.error&&cr.data?.conversation&&data.initiator_id===me.id)startCall({...p},cr.data.conversation,'video',data.pair_id)}else if(mode==='leave')back()}useEffect(()=>{const t=setInterval(()=>{setSeconds(v=>{if(state==='paired'&&v<=1){join('next');return 120}return Math.max(0,v-1)});},1000);return()=>clearInterval(t)},[state]);useEffect(()=>{if(state==='waiting'){const t=setInterval(()=>join('join'),3000);return()=>clearInterval(t)}},[state]);const active=london().active;return <main className="speedPage"><div className="speedHeader"><button onClick={back}><ArrowLeft/></button><div><h1>Speed dating</h1><small>2-minute video dates</small></div></div><div className="speedBody">{state==='idle'&&<div className="speedIntro"><Zap/><h2>Ready for a quick date?</h2><p>Every Saturday and Sunday from <b>8:00pm to 8:30pm</b> (UK time), you'll meet someone new on video every two minutes.</p><button className="primary" onClick={()=>setConfirm(true)}>Enter speed dating</button><button className="walkBtn" onClick={back}>Walk away</button></div>}{confirm&&<div className="speedModal"><div><h2>Join Speed Dating?</h2><p>{active?'The session is live now.':'You can enter the waiting queue now. The dates begin at 8:00pm UK time.'}</p><button className="primary" onClick={()=>{setConfirm(false);if(!active)queueSpeedDatingReminder();join()}}>Enter</button><button className="walkBtn" onClick={()=>setConfirm(false)}>Walk away</button></div></div>}{(state==='waiting'||state==='paired')&&<div className="speedLive">{state==='waiting'?<><Timer size={50}/><h2>You're in the queue</h2><p>{active?'Finding your next date…':'Waiting for Saturday/Sunday at 8:00pm UK time.'}</p></>:<><div className="dateTimer">{Math.floor(seconds/60)}:{String(seconds%60).padStart(2,'0')}</div><div className="speedVideo"><video autoPlay playsInline/><div className="speedPlaceholder">{partner?.display_name}, {partner?.age}</div></div><button className="heartDate" onClick={async()=>{if(pair){const r=await supabase.rpc('speed_dating_like',{p_pair_id:pair});if(r.error)setError(friendly(r.error));else if(r.data?.mutual)alert('It’s a mutual like! You can continue chatting after the date.')}}}><Heart fill="currentColor"/></button><p>You can heart them if you'd like to connect after the date.</p><button className="walkBtn" onClick={()=>join('leave')}>Leave speed dating</button></>}</div>}{error&&<div className="error">{error}</div>}</div></main>}
 
@@ -537,6 +588,21 @@ async function syncDateReminders(uid){
 }
 function queueSpeedDatingReminder(){const at=nextSpeedDatingStart();if(at)scheduleReminder('speeddating-'+at,at,'Speed dating starts at 8:00 PM','Speed dating starts in 30 minutes. Stay ready — you are in the queue!')}
 
+async function showLocalNotification(title,body){
+ try{
+  const LN=window.Capacitor?.Plugins?.LocalNotifications
+  if(LN){await LN.schedule({notifications:[{id:Math.floor(Math.random()*2000000000)+1,title,body,schedule:{at:new Date(Date.now()+400)}}]});return}
+  if(typeof Notification!=='undefined'&&Notification.permission==='granted')new Notification(title,{body})
+ }catch{}
+}
+function notifyUser(title,body){
+ if(document.hidden)showLocalNotification(title,body)
+ else window.dispatchEvent(new CustomEvent('love-that-reminder',{detail:{title,body}}))
+}
+async function requestNotifyPermission(){
+ try{const LN=window.Capacitor?.Plugins?.LocalNotifications;if(LN)await LN.requestPermissions()}catch{}
+ askNotifyPermission()
+}
 async function fnErrorMessage(e){try{if(e?.context&&typeof e.context.text==='function'){const t=await e.context.text();try{const b=JSON.parse(t);return b.error||b.message||t}catch{return t}}}catch{}return e?.message||''}
 
 async function ensureMediaPermission(mode){
