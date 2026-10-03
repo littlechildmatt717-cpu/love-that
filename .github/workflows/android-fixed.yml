@@ -115,9 +115,19 @@ jobs:
           from pathlib import Path
           path = Path(sys.argv[1])
           text = path.read_text(encoding="utf-8")
-          permissions = ["android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"]
+          permissions = [
+            "android.permission.READ_MEDIA_IMAGES",
+            "android.permission.READ_MEDIA_VIDEO",
+            "android.permission.CAMERA",
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.POST_NOTIFICATIONS",
+          ]
+          features = ["android.hardware.camera", "android.hardware.microphone"]
           for p in permissions:
             text = re.sub(r'^[ \t]*<uses-permission\b[^>]*android:name\s*=\s*["\']'+re.escape(p)+r'["\'][^>]*/?>[ \t]*\r?\n?', "", text, flags=re.MULTILINE)
+          for f in features:
+            text = re.sub(r'^[ \t]*<uses-feature\b[^>]*android:name\s*=\s*["\']'+re.escape(f)+r'["\'][^>]*/?>[ \t]*\r?\n?', "", text, flags=re.MULTILINE)
           match = re.search(r'<manifest\b[^>]*>', text, flags=re.IGNORECASE)
           if not match:
             print("::error::Could not find <manifest> element.")
@@ -132,8 +142,12 @@ jobs:
             repaired_tag = manifest_tag[:-1].rstrip() + ' xmlns:android="http://schemas.android.com/apk/res/android">'
             text = text[:match.start()] + repaired_tag + text[match.end():]
             match = re.search(r'<manifest\b[^>]*>', text, flags=re.IGNORECASE)
-          permissions_xml = "\n    <uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\" />\n    <uses-permission android:name=\"android.permission.READ_MEDIA_VIDEO\" />\n"
-          text = text[:match.end()] + permissions_xml + text[match.end():]
+          block = "\n"
+          for p in permissions:
+            block += '    <uses-permission android:name="' + p + '" />\n'
+          for f in features:
+            block += '    <uses-feature android:name="' + f + '" android:required="false" />\n'
+          text = text[:match.end()] + block + text[match.end():]
           path.write_text(text, encoding="utf-8")
           print("Manifest repair completed.")
           PY
@@ -194,7 +208,14 @@ jobs:
           root = tree.getroot()
           android_ns = "http://schemas.android.com/apk/res/android"
           android_name = f"{{{android_ns}}}name"
-          required = {"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO"}
+          required = {
+            "android.permission.READ_MEDIA_IMAGES",
+            "android.permission.READ_MEDIA_VIDEO",
+            "android.permission.CAMERA",
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.POST_NOTIFICATIONS",
+          }
           found = [child.attrib.get(android_name) for child in root if child.tag == "uses-permission"]
           for p in required:
             if found.count(p) != 1:
