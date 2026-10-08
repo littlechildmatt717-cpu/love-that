@@ -1,7 +1,7 @@
-workflows:
-  create-keystore:
-    name: One-time - create signing keystore
-    instance_type: linux_x2
+   workflows:
+      create-keystore:
+      name: One-time - create signing keystore
+      instance_type: linux_x2
     max_build_duration: 10
     environment:
       groups:
