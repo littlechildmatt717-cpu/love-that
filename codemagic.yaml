@@ -1,0 +1,48 @@
+workflows:
+  android-release:
+    name: love that - Android release (AAB)
+    instance_type: linux_x2
+    max_build_duration: 60
+    environment:
+      node: 20
+      java: 17
+      android_signing:
+        - lovethat_keystore
+      vars:
+        PACKAGE_NAME: "com.meetdating.app"
+    scripts:
+      - name: Install dependencies
+        script: npm install
+
+      - name: Build the web app
+        script: npm run build
+
+      - name: Sync Capacitor to Android
+        script: npx cap sync android
+
+      - name: Tell Gradle where the Android SDK is
+        script: echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/android/local.properties"
+
+      - name: Set version code from build number
+        script: |
+          sed -i "s/versionCode [0-9]*/versionCode $BUILD_NUMBER/" android/app/build.gradle
+
+      - name: Build the Android App Bundle
+        script: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew bundleRelease
+
+      - name: Sign the bundle
+        script: |
+          AAB=$(find android/app/build/outputs/bundle/release -name "*.aab" | head -n 1)
+          jarsigner \
+            -keystore "$CM_KEYSTORE_PATH" \
+            -storepass "$CM_KEYSTORE_PASSWORD" \
+            -keypass "$CM_KEY_PASSWORD" \
+            -sigalg SHA256withRSA -digestalg SHA-256 \
+            "$AAB" "$CM_KEY_ALIAS"
+          cp "$AAB" "$CM_BUILD_DIR/app-release-signed.aab"
+
+    artifacts:
+      - app-release-signed.aab
