@@ -46,3 +46,23 @@ workflows:
 
     artifacts:
       - app-release-signed.aab
+
+  create-keystore:
+    name: One-time - create signing keystore
+    instance_type: linux_x2
+    max_build_duration: 10
+    environment:
+      groups:
+        - keystore_setup
+    scripts:
+      - name: Generate the keystore
+        script: |
+          keytool -genkeypair -v \
+            -keystore lovethat.jks \
+            -alias lovethat \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEYSTORE_PASSWORD" \
+            -dname "CN=love that, O=love that, C=GB"
+    artifacts:
+      - lovethat.jks
