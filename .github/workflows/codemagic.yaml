@@ -1,4 +1,4 @@
-   workflows:
+ workflows:
       create-keystore:
       name: One-time - create signing keystore
       instance_type: linux_x2
