@@ -132,15 +132,20 @@ jobs:
           path = Path(sys.argv[1])
           text = path.read_text(encoding="utf-8")
           permissions = [
-            "android.permission.READ_MEDIA_IMAGES",
-            "android.permission.READ_MEDIA_VIDEO",
             "android.permission.CAMERA",
             "android.permission.RECORD_AUDIO",
             "android.permission.MODIFY_AUDIO_SETTINGS",
             "android.permission.POST_NOTIFICATIONS",
+            "com.google.android.gms.permission.AD_ID",
           ]
+          # Google Play photo/video permissions policy: these must NOT be in the app
+          banned = [
+            "android.permission.READ_MEDIA_IMAGES",
+            "android.permission.READ_MEDIA_VIDEO",
+          ]
+          ADMOB_APP_ID = "ca-app-pub-7675714255330333~8500714539"
           features = ["android.hardware.camera", "android.hardware.microphone"]
-          for p in permissions:
+          for p in permissions + banned:
             text = re.sub(r'^[ \t]*<uses-permission\b[^>]*android:name\s*=\s*["\']'+re.escape(p)+r'["\'][^>]*/?>[ \t]*\r?\n?', "", text, flags=re.MULTILINE)
           for f in features:
             text = re.sub(r'^[ \t]*<uses-feature\b[^>]*android:name\s*=\s*["\']'+re.escape(f)+r'["\'][^>]*/?>[ \t]*\r?\n?', "", text, flags=re.MULTILINE)
@@ -164,6 +169,13 @@ jobs:
           for f in features:
             block += '    <uses-feature android:name="' + f + '" android:required="false" />\n'
           text = text[:match.end()] + block + text[match.end():]
+          # AdMob application ID (the app crashes on start without it)
+          text = re.sub(r'^[ \t]*<meta-data\b[^>]*com\.google\.android\.gms\.ads\.APPLICATION_ID[^>]*/>[ \t]*\r?\n?', "", text, flags=re.MULTILINE)
+          if "</application>" not in text:
+            print("::error::Could not find </application>.")
+            sys.exit(1)
+          meta = '    <meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="' + ADMOB_APP_ID + '" />\n    '
+          text = text.replace("</application>", meta + "</application>", 1)
           path.write_text(text, encoding="utf-8")
           print("Manifest repair completed.")
           PY
@@ -225,21 +237,31 @@ jobs:
           android_ns = "http://schemas.android.com/apk/res/android"
           android_name = f"{{{android_ns}}}name"
           required = {
-            "android.permission.READ_MEDIA_IMAGES",
-            "android.permission.READ_MEDIA_VIDEO",
             "android.permission.CAMERA",
             "android.permission.RECORD_AUDIO",
             "android.permission.MODIFY_AUDIO_SETTINGS",
             "android.permission.POST_NOTIFICATIONS",
+            "com.google.android.gms.permission.AD_ID",
+          }
+          banned = {
+            "android.permission.READ_MEDIA_IMAGES",
+            "android.permission.READ_MEDIA_VIDEO",
           }
           found = [child.attrib.get(android_name) for child in root if child.tag == "uses-permission"]
           for p in required:
             if found.count(p) != 1:
               raise SystemExit(f"{p} count: {found.count(p)} — expected 1")
+          for p in banned:
+            if p in found:
+              raise SystemExit(f"{p} must not be in the manifest (Google Play policy)")
+          app = root.find("application")
+          metas = [m.attrib.get(android_name) for m in app.findall("meta-data")] if app is not None else []
+          if "com.google.android.gms.ads.APPLICATION_ID" not in metas:
+            raise SystemExit("AdMob APPLICATION_ID meta-data is missing - the app would crash on start")
           if root.find("application") is not None:
             if root.find("application").find("uses-permission") is not None:
               raise SystemExit("uses-permission inside <application> — wrong location!")
-          print("STRICT CHECK PASSED ✅")
+          print("STRICT CHECK PASSED ✅ (AdMob ID present, no READ_MEDIA permissions)")
           PY
 
       - name: Check & set Gradle wrapper
@@ -269,6 +291,27 @@ jobs:
       - name: Build Android release bundle
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace bundleRelease
+
+      # ✅ Make sure no library added the banned permissions back
+      - name: Check merged manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILES="$(find android/app/build/intermediates -path '*merged_manifests/release*' -name AndroidManifest.xml 2>/dev/null || true)"
+          if [ -z "$FILES" ]; then
+            echo "::warning::Merged release manifest not found - skipping check."
+            exit 0
+          fi
+          for f in $FILES; do
+            echo "Checking $f"
+            if grep -qE "READ_MEDIA_(IMAGES|VIDEO)" "$f"; then
+              echo "::error::READ_MEDIA_IMAGES/VIDEO found in the merged manifest (a library added them)."
+              grep -nE "READ_MEDIA_(IMAGES|VIDEO)" "$f"
+              exit 1
+            fi
+            grep -q "com.google.android.gms.ads.APPLICATION_ID" "$f" || { echo "::error::AdMob APPLICATION_ID missing in merged manifest."; exit 1; }
+          done
+          echo "Merged manifest OK ✅"
 
       # ✅ SIGN THE APP BUNDLE (needs the 4 GitHub secrets)
       - name: Sign App Bundle
