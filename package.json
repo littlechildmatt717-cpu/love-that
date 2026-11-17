@@ -20,7 +20,8 @@
     "react": "latest",
     "react-dom": "latest",
     "lucide-react": "latest",
-    "@supabase/supabase-js": "2.116.0"
+    "@supabase/supabase-js": "2.116.0",
+    "@capacitor-community/admob": "^8.2.1"
   },
   "devDependencies": {
     "@capacitor/cli": "latest",
