@@ -9,8 +9,8 @@ on:
 
 # ✅ CHANGE THESE TWO NUMBERS FOR EACH NEW GOOGLE PLAY RELEASE
 env:
-  VERSION_CODE: "8"
-  VERSION_NAME: "7.1"
+  VERSION_CODE: "9"
+  VERSION_NAME: "7.2"
 
 jobs:
   android-release:
