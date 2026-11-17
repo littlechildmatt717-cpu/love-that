@@ -7,6 +7,11 @@ on:
       - master
   workflow_dispatch:
 
+# ✅ CHANGE THESE TWO NUMBERS FOR EACH NEW GOOGLE PLAY RELEASE
+env:
+  VERSION_CODE: "7"
+  VERSION_NAME: "7.0"
+
 jobs:
   android-release:
     name: Android release build
@@ -66,21 +71,24 @@ jobs:
             echo "Android directory already exists."
           fi
 
-      - name: Generate Android app icons
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f assets/icon-only.png ]; then
-            npm install --no-save --no-audit --no-fund @capacitor/assets
-            npx capacitor-assets generate --android --iconBackgroundColor '#000000' --iconBackgroundColorDark '#000000'
-          else
-            echo "::warning::assets/icon-only.png not found - the default Capacitor icon will be used."
-          fi
-
       - name: Sync Capacitor Android
         run: |
           set -euo pipefail
           npx cap sync android
+
+      - name: Generate and verify Android launcher icons
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          test -f icon-512.png
+          cp icon-512.png assets/icon-only.png
+          npm install --no-save --no-audit --no-fund @capacitor/assets
+          npx capacitor-assets generate --android --iconBackgroundColor '#d5007f' --iconBackgroundColorDark '#d5007f'
+          test -s android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          echo "Launcher icons generated from the Love That logo."
+          echo "=== Generated launcher resources ==="
+          find android/app/src/main/res -path '*mipmap*' -name 'ic_launcher*' -type f -print
 
       - name: Detect Android SDK requirements
         shell: bash
@@ -247,11 +255,58 @@ jobs:
           fi
           chmod +x android/gradlew
 
+      # ✅ SET THE VERSION (uses VERSION_CODE / VERSION_NAME at the top)
+      - name: Set app version
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE="android/app/build.gradle"
+          sed -i -E "s/versionCode [0-9]+/versionCode ${VERSION_CODE}/; s/versionName \"[^\"]*\"/versionName \"${VERSION_NAME}\"/" "$GRADLE"
+          echo "=== Version lines in build.gradle ==="
+          grep -nE "versionCode|versionName" "$GRADLE"
+          if ! grep -q "versionCode ${VERSION_CODE}" "$GRADLE"; then
+            echo "::error::Could not set versionCode in $GRADLE"
+            exit 1
+          fi
+
       - name: Build Android release bundle
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace bundleRelease
 
-      # ✅ DOWNLOAD — App Bundle (for Google Play)
+      # ✅ SIGN THE APP BUNDLE (needs the 4 GitHub secrets)
+      - name: Sign App Bundle
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for v in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::GitHub secret $v is missing. Add it under Settings > Secrets and variables > Actions."
+              exit 1
+            fi
+          done
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+          if [ ! -f "$AAB" ]; then
+            echo "::error::$AAB not found"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+          jarsigner \
+            -sigalg SHA256withRSA \
+            -digestalg SHA-256 \
+            -keystore "$RUNNER_TEMP/upload.keystore" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            "$AAB" "$KEY_ALIAS"
+          jarsigner -verify "$AAB"
+          rm -f "$RUNNER_TEMP/upload.keystore"
+          echo "App Bundle signed ✅"
+
+      # ✅ DOWNLOAD — signed App Bundle (for Google Play)
       - name: Upload App Bundle (.aab)
         uses: actions/upload-artifact@v4
         with:
